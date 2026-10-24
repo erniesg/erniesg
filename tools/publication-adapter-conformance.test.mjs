@@ -76,25 +76,38 @@ describe('publication adapter output conformance CLI', () => {
     }
   })
 
-  it('passes canonical graphs to the renderer after semantic comparison', async () => {
+  it('passes the canonical graph to the renderer', async () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-adapter-conformance-boundary-'),
     )
     const output = resolve(temporaryRoot, 'output')
     const renderedNodeIds = []
+    const renderedStructBlockIds = []
     const originalRender = vivliostyleRenderer.render
     vivliostyleRenderer.render = async (bundle) => {
       renderedNodeIds.push(bundle.graph.nodes.map((node) => node.id))
-      if (renderedNodeIds.length === 2) throw new Error('render-boundary-captured')
-      return undefined
+      renderedStructBlockIds.push(
+        bundle.structDocument.blocks.map((block) => block.id),
+      )
+      throw new Error('render-boundary-captured')
     }
     try {
       await expect(
         publicationAdapterConformance(['--output', output]),
       ).rejects.toThrow('render-boundary-captured')
-      expect(renderedNodeIds).toHaveLength(2)
-      expect(renderedNodeIds[0][0]).toBe('node-1')
-      expect(renderedNodeIds[1][0]).toBe('node-1')
+      // The retired Payload adapter was the only second adapter, so exactly one
+      // canonical graph is rendered now.
+      expect(renderedNodeIds).toHaveLength(1)
+      // The graph authors no semantic id. The rendered node id is the id of
+      // the Struct block the node was projected from: the blocks are the ones
+      // the pinned Struct package produced from the Astro fixture
+      // (tests/fixtures/publication/astro/payload-equivalent.mdx), whose
+      // first block is the document heading.
+      const [nodeIds] = renderedNodeIds
+      const [structBlockIds] = renderedStructBlockIds
+      expect(nodeIds[0]).toMatch(/^struct-block-[0-9a-f]{24}$/u)
+      expect(structBlockIds).toContain(nodeIds[0])
+      expect(nodeIds[0]).toBe(structBlockIds[0])
     } finally {
       vivliostyleRenderer.render = originalRender
       await rm(temporaryRoot, { recursive: true, force: true })
@@ -182,7 +195,11 @@ describe('publication adapter output conformance CLI', () => {
       )
       expect(result.status, result.stderr).toBe(0)
       expect(result.stdout).toContain(
-        `Astro/Payload publication output receipts conform at ${output} (4 artifacts each)`,
+        `Astro publication output receipt conforms at ${output} (4 artifacts)`,
+      )
+      // The coverage loss is stated by the tool itself, not hidden by it.
+      expect(result.stdout).toContain(
+        'Coverage loss: the cross-adapter equivalence proof no longer has a second adapter',
       )
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })

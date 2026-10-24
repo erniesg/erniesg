@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { researchPaperToPublicationGraph } from '../publication/research-paper-adapter'
+import { structId } from '@erniesg/struct/identity'
 import * as legacyAnnotations from '../research/annotations'
 import rawPaper from '../research/papers/semantic-responsive-typesetting.json'
 import { researchPaperSchema } from '../research/schema'
@@ -8,6 +8,7 @@ import {
   annotationBundleSchema,
   createAnnotationBundle,
   serializeAnnotationBundle,
+  type AnnotationAnchorSource,
 } from './annotation-bundle'
 import * as movedAnnotations from './annotations'
 import {
@@ -34,6 +35,52 @@ const FIXTURE_ANCHOR = {
 }
 
 const paper = researchPaperSchema.parse(rawPaper)
+
+const proposition = paper.nodes.find(
+  (candidate) => candidate.id === 'p-proposition-1',
+)
+if (!proposition || proposition.type !== 'paragraph') {
+  throw new Error('Annotation fixture lost p-proposition-1')
+}
+
+/**
+ * The Struct block id of the same paragraph.
+ *
+ * The Struct document is the anchor authority now, so the fixture addresses
+ * its block by the Struct id. The id is minted by the package's own identity
+ * function — the primitive the app's Struct ingress uses — so it is a Struct
+ * block id and not a graph node id.
+ */
+const STRUCT_BLOCK_ID = structId(
+  'block',
+  `move-parity:paragraph:p-proposition-1:${proposition.text}`,
+)
+
+/**
+ * The Struct-derived anchor source for the fixture document. Its source id is
+ * the document's own id, the same value the app's Struct ingress records as
+ * the Struct document id.
+ */
+const structSource: AnnotationAnchorSource = {
+  id: paper.id,
+  nodes: [{ id: STRUCT_BLOCK_ID, type: 'paragraph', text: proposition.text }],
+}
+
+/** The same anchor, addressed by the Struct block id instead of the paper id. */
+const STRUCT_FIXTURE_ANCHOR = { ...FIXTURE_ANCHOR, nodeId: STRUCT_BLOCK_ID }
+
+/** The demo annotations, addressed by the Struct block id. */
+function structAddressedDemoAnnotations() {
+  return createDemoAnnotations(paper).map((annotation) => ({
+    ...annotation,
+    target: { ...annotation.target, nodeId: STRUCT_BLOCK_ID },
+  }))
+}
+
+/** The bundle those annotations produce against the Struct source. */
+function structAnchoredBundle() {
+  return createAnnotationBundle(structSource, structAddressedDemoAnnotations())
+}
 
 describe('annotations module relocation', () => {
   it('parses the shipped research fixture into the pre-move anchor', () => {
@@ -72,24 +119,51 @@ describe('annotations module relocation', () => {
     ])
   })
 
-  it('bundles those annotations at the current bundle version', () => {
-    const bundle = createAnnotationBundle(
-      researchPaperToPublicationGraph(paper),
-      createDemoAnnotations(paper),
+  it('moves the same anchor onto the Struct block id', () => {
+    const anchor = createSemanticTextAnchor(
+      STRUCT_BLOCK_ID,
+      proposition.text,
+      FIXTURE_QUOTE,
     )
 
-    expect(ANNOTATION_BUNDLE_VERSION).toBe('1.1.0')
-    expect(bundle.version).toBe('1.1.0')
-    expect(bundle.graphId).toBe('semantic-responsive-typesetting')
+    expect(anchor).toEqual(STRUCT_FIXTURE_ANCHOR)
+    expect(semanticTextAnchorSchema.parse(anchor)).toEqual(
+      STRUCT_FIXTURE_ANCHOR,
+    )
+    expect(anchor.position).toEqual(FIXTURE_ANCHOR.position)
+    expect(anchor.quote).toEqual(FIXTURE_ANCHOR.quote)
+  })
+
+  it('bundles those annotations at the current bundle version', () => {
+    const bundle = structAnchoredBundle()
+
+    expect(ANNOTATION_BUNDLE_VERSION).toBe('1.2.0')
+    expect(bundle.version).toBe('1.2.0')
     expect(bundle.anchors).toEqual([
-      { id: 'highlight-reading-position:target', anchor: FIXTURE_ANCHOR },
-      { id: 'note-reading-position:target', anchor: FIXTURE_ANCHOR },
+      {
+        id: 'highlight-reading-position:target',
+        anchor: STRUCT_FIXTURE_ANCHOR,
+      },
+      { id: 'note-reading-position:target', anchor: STRUCT_FIXTURE_ANCHOR },
     ])
     expect(
       annotationBundleSchema.parse(
         JSON.parse(serializeAnnotationBundle(bundle)),
       ),
     ).toEqual(bundle)
+  })
+
+  it('binds those annotations to the Struct source id', () => {
+    const bundle = structAnchoredBundle()
+
+    expect(bundle.sourceId).toBe(paper.id)
+  })
+
+  it('never carries a graph id', () => {
+    const bundle = structAnchoredBundle()
+
+    expect(bundle.graphId).toBeUndefined()
+    expect(bundle).not.toHaveProperty('graphId')
   })
 
   it('still rejects the shapes the pre-move schemas rejected', () => {

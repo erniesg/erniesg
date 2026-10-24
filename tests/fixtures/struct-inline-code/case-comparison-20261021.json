@@ -1,0 +1,388 @@
+{
+  "schemaVersion": 1,
+  "measuredOn": "2026-10-21",
+  "appBranch": "feat/struct-e04-fidelity-inline-code-20261021",
+  "appBase": "c1d5e92ff7cb4aac635d91baf33b20f58e98c2fc",
+  "base": {
+    "app": "9003ea7657ef73cbad271e6a82eab5f27f649e91",
+    "label": "the pre-E-04 app, whose own publication adapter carried inlineCode on the publication inline run"
+  },
+  "e04Candidate": {
+    "app": "c1d5e92ff7cb4aac635d91baf33b20f58e98c2fc",
+    "label": "the E-04 candidate on the pinned Struct package, which reduced every inline-code span to plain text"
+  },
+  "fixed": {
+    "label": "this branch: the pinned Struct package carries the inline code flag, the app ingress keeps it and the publication projection maps it to the existing inlineCode field"
+  },
+  "method": "Each side ran its own repository publication adapter over the byte-identical extracted block and rendered its own phone-webpub XHTML. The block bytes are the exact source bytes of the named top-level mdast block.",
+  "cases": [
+    {
+      "id": "pinned-main",
+      "sourceFile": "src/content/blog/moving-to-cloudflare-with-astro/index.mdx",
+      "sourceSha256": "9603c08556ffd5de4d1e47a123159eeed0640e65eb2f12483f596333d883c362",
+      "blockType": "paragraph",
+      "blockContentLines": "66-66",
+      "blockTextSha256": "6fa9daba346b2f774c98a7856c154c0b68df9c013a319caacb43691d91982c47",
+      "spans": [
+        {
+          "value": "main",
+          "occurrenceIndex": 0,
+          "sourceLine": 66,
+          "sourceColumn": 123,
+          "start": 122,
+          "end": 126,
+          "baseHtmlBytes": "<code>main</code>",
+          "e04CandidateHtmlBytes": "main",
+          "fixedHtmlBytes": "<code>main</code>"
+        }
+      ],
+      "baseInlineRuns": [
+        {
+          "start": 122,
+          "end": 126,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateInlineRuns": [],
+      "fixedInlineRuns": [
+        {
+          "start": 122,
+          "end": 126,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateLossyInlineStyleDiagnostics": 1,
+      "fixedLossyInlineStyleDiagnostics": 0,
+      "basePhoneWebpubSha256": "68f0e5932bb08a713506e5562dc5f336a2361294be1e9840f2207af33a9aac95",
+      "e04CandidatePhoneWebpubSha256": "22d36330cd1805588a20c67b80eeaca3a17399807ab22f2d1c12322a4aad38f7",
+      "fixedPhoneWebpubSha256": "860598487050ee87bc1b07c42dca95bdfd6cabd1da60706b2275818cbc282661"
+    },
+    {
+      "id": "streaming-ai-sdk",
+      "sourceFile": "src/content/blog/streaming-generated-diagrams/index.mdx",
+      "sourceSha256": "aebf98494e9696f57d9950b5616c2bd2eb54c2ab63234de80cb82922ab229bf8",
+      "blockType": "paragraph",
+      "blockContentLines": "30-30",
+      "blockTextSha256": "596bcbfece4124c20386e859959805b6878ffebbabc22cc683051210cfe15caf",
+      "spans": [
+        {
+          "value": "partialObjectStream",
+          "occurrenceIndex": 0,
+          "sourceLine": 30,
+          "sourceColumn": 44,
+          "start": 43,
+          "end": 62,
+          "baseHtmlBytes": "<code>partialObjectStream</code>",
+          "e04CandidateHtmlBytes": "partialObjectStream",
+          "fixedHtmlBytes": "<code>partialObjectStream</code>"
+        },
+        {
+          "value": "streamText()",
+          "occurrenceIndex": 1,
+          "sourceLine": 30,
+          "sourceColumn": 100,
+          "start": 97,
+          "end": 109,
+          "baseHtmlBytes": "<code>streamText()</code>",
+          "e04CandidateHtmlBytes": "streamText()",
+          "fixedHtmlBytes": "<code>streamText()</code>"
+        },
+        {
+          "value": "streamObject()",
+          "occurrenceIndex": 2,
+          "sourceLine": 30,
+          "sourceColumn": 133,
+          "start": 128,
+          "end": 142,
+          "baseHtmlBytes": "<code>streamObject()</code>",
+          "e04CandidateHtmlBytes": "streamObject()",
+          "fixedHtmlBytes": "<code>streamObject()</code>"
+        }
+      ],
+      "baseInlineRuns": [
+        {
+          "start": 43,
+          "end": 62,
+          "inlineCode": true
+        },
+        {
+          "start": 97,
+          "end": 109,
+          "inlineCode": true
+        },
+        {
+          "start": 128,
+          "end": 142,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateInlineRuns": [],
+      "fixedInlineRuns": [
+        {
+          "start": 43,
+          "end": 62,
+          "inlineCode": true
+        },
+        {
+          "start": 97,
+          "end": 109,
+          "inlineCode": true
+        },
+        {
+          "start": 128,
+          "end": 142,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateLossyInlineStyleDiagnostics": 3,
+      "fixedLossyInlineStyleDiagnostics": 0,
+      "basePhoneWebpubSha256": "54bb53802235ef61f74b8cba8e35d740c18f980826f6e1d5e3001b730825ec1e",
+      "e04CandidatePhoneWebpubSha256": "76dc5fc7ed14ef75f409551dad8196959c8bbb1d966caae292673da404278b75",
+      "fixedPhoneWebpubSha256": "81faba415c9fb4b245ceec04c8a212cb336d2608b9274b0c449c0329c8da07e6"
+    },
+    {
+      "id": "air-drumming-numpy",
+      "sourceFile": "src/content/blog/tutorial-air-drumming-with-a-i/index.mdx",
+      "sourceSha256": "288905d159f11476550369a0e35d33aa8ca71bf476393e89ba53e641d01e3fc1",
+      "blockType": "paragraph",
+      "blockContentLines": "73-73",
+      "blockTextSha256": "94b544c06c0efe30d738106cb52aa6f989f3fac0b76af5bbb5aa1ba20fa3cf7b",
+      "spans": [
+        {
+          "value": "numpy",
+          "occurrenceIndex": 0,
+          "sourceLine": 73,
+          "sourceColumn": 11,
+          "start": 10,
+          "end": 15,
+          "baseHtmlBytes": "<code>numpy</code>",
+          "e04CandidateHtmlBytes": "numpy",
+          "fixedHtmlBytes": "<code>numpy</code>"
+        },
+        {
+          "value": "q",
+          "occurrenceIndex": 1,
+          "sourceLine": 73,
+          "sourceColumn": 75,
+          "start": 72,
+          "end": 73,
+          "baseHtmlBytes": "<code>q</code>",
+          "e04CandidateHtmlBytes": "q",
+          "fixedHtmlBytes": "<code>q</code>"
+        }
+      ],
+      "baseInlineRuns": [
+        {
+          "start": 10,
+          "end": 15,
+          "inlineCode": true
+        },
+        {
+          "start": 72,
+          "end": 73,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateInlineRuns": [],
+      "fixedInlineRuns": [
+        {
+          "start": 10,
+          "end": 15,
+          "inlineCode": true
+        },
+        {
+          "start": 72,
+          "end": 73,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateLossyInlineStyleDiagnostics": 2,
+      "fixedLossyInlineStyleDiagnostics": 0,
+      "basePhoneWebpubSha256": "417a6ec50037fede3eaa925c4e345259b2eace12bfebec329cf899fe20a31c27",
+      "e04CandidatePhoneWebpubSha256": "808cc6197940c5da6d6cd3ce1024e04af99218e2ae59508edb14edf738e71d05",
+      "fixedPhoneWebpubSha256": "26cdc26f4fcc55dd80e2dabec70d5e789e0a34cb1a53d2ca640ad44c3b9ef31a"
+    },
+    {
+      "id": "sound-of-stories-roles",
+      "sourceFile": "src/content/blog/developer-diaries-the-sound-of-stories/index.mdx",
+      "sourceSha256": "074625a01cb7b9b862ad0f48b468e4f36a30ecf335c9c918f57371b046551a3e",
+      "blockType": "paragraph",
+      "blockContentLines": "39-39",
+      "blockTextSha256": "753486fd494d25bcf1a158568031a5fa864a8b8a147f6b603bd15ffa3a65d186",
+      "spans": [
+        {
+          "value": "director",
+          "occurrenceIndex": 0,
+          "sourceLine": 39,
+          "sourceColumn": 331,
+          "start": 326,
+          "end": 334,
+          "baseHtmlBytes": "<code>director</code>",
+          "e04CandidateHtmlBytes": "director",
+          "fixedHtmlBytes": "<code>director</code>"
+        },
+        {
+          "value": "scriptwriter",
+          "occurrenceIndex": 1,
+          "sourceLine": 39,
+          "sourceColumn": 345,
+          "start": 338,
+          "end": 350,
+          "baseHtmlBytes": "<code>scriptwriter</code>",
+          "e04CandidateHtmlBytes": "scriptwriter",
+          "fixedHtmlBytes": "<code>scriptwriter</code>"
+        },
+        {
+          "value": "assistant",
+          "occurrenceIndex": 2,
+          "sourceLine": 39,
+          "sourceColumn": 367,
+          "start": 358,
+          "end": 367,
+          "baseHtmlBytes": "<code>assistant</code>",
+          "e04CandidateHtmlBytes": "assistant",
+          "fixedHtmlBytes": "<code>assistant</code>"
+        },
+        {
+          "value": "if",
+          "occurrenceIndex": 3,
+          "sourceLine": 39,
+          "sourceColumn": 509,
+          "start": 498,
+          "end": 500,
+          "baseHtmlBytes": "<code>if</code>",
+          "e04CandidateHtmlBytes": "if",
+          "fixedHtmlBytes": "<code>if</code>"
+        }
+      ],
+      "baseInlineRuns": [
+        {
+          "start": 76,
+          "end": 97,
+          "bold": true
+        },
+        {
+          "start": 326,
+          "end": 334,
+          "inlineCode": true
+        },
+        {
+          "start": 338,
+          "end": 350,
+          "inlineCode": true
+        },
+        {
+          "start": 358,
+          "end": 367,
+          "inlineCode": true
+        },
+        {
+          "start": 498,
+          "end": 500,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateInlineRuns": [
+        {
+          "start": 76,
+          "end": 97,
+          "bold": true
+        }
+      ],
+      "fixedInlineRuns": [
+        {
+          "start": 76,
+          "end": 97,
+          "bold": true
+        },
+        {
+          "start": 326,
+          "end": 334,
+          "inlineCode": true
+        },
+        {
+          "start": 338,
+          "end": 350,
+          "inlineCode": true
+        },
+        {
+          "start": 358,
+          "end": 367,
+          "inlineCode": true
+        },
+        {
+          "start": 498,
+          "end": 500,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateLossyInlineStyleDiagnostics": 4,
+      "fixedLossyInlineStyleDiagnostics": 0,
+      "basePhoneWebpubSha256": "75c721b287419cd4fa376fc85c647adaafcced77d7d0be69263e0bbe45cc2644",
+      "e04CandidatePhoneWebpubSha256": "4aa7ccc54cef0d69c66d3aa3402c18012b86b31331494bce3629e8984993df2f",
+      "fixedPhoneWebpubSha256": "779ab42b3dcd3021802e6413a5eef21d7addc4eac666e0fef18daedc05eb89c4"
+    },
+    {
+      "id": "deep-learning-vae",
+      "sourceFile": "src/content/blog/developer-diaries-deep-learning-in-data-poor-regimes-i/index.mdx",
+      "sourceSha256": "18b7ce0d8541ff2c16ac7d2cc824ddd623dcc96fd8d5f30b12021d00f72e0192",
+      "blockType": "paragraph",
+      "blockContentLines": "10-10",
+      "blockTextSha256": "b3ffb3a2573622195c630f2d01a9b92278898d550803cb90d6d23ee31abf8a34",
+      "spans": [
+        {
+          "value": "v2",
+          "occurrenceIndex": 0,
+          "sourceLine": 10,
+          "sourceColumn": 32,
+          "start": 31,
+          "end": 33,
+          "baseHtmlBytes": "<code>v2</code>",
+          "e04CandidateHtmlBytes": "v2",
+          "fixedHtmlBytes": "<code>v2</code>"
+        },
+        {
+          "value": "wasserstein",
+          "occurrenceIndex": 1,
+          "sourceLine": 10,
+          "sourceColumn": 42,
+          "start": 39,
+          "end": 50,
+          "baseHtmlBytes": "<code>wasserstein</code>",
+          "e04CandidateHtmlBytes": "wasserstein",
+          "fixedHtmlBytes": "<code>wasserstein</code>"
+        }
+      ],
+      "baseInlineRuns": [
+        {
+          "start": 31,
+          "end": 33,
+          "inlineCode": true
+        },
+        {
+          "start": 39,
+          "end": 50,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateInlineRuns": [],
+      "fixedInlineRuns": [
+        {
+          "start": 31,
+          "end": 33,
+          "inlineCode": true
+        },
+        {
+          "start": 39,
+          "end": 50,
+          "inlineCode": true
+        }
+      ],
+      "e04CandidateLossyInlineStyleDiagnostics": 2,
+      "fixedLossyInlineStyleDiagnostics": 0,
+      "basePhoneWebpubSha256": "5b338fafbb46e81d914bbce605ab88f340772206be2aef1c335dfcde4d27072c",
+      "e04CandidatePhoneWebpubSha256": "6f19df0d0d36ff2a63204ea61f1597c296b77bb8f3663912fdb2a204a5659450",
+      "fixedPhoneWebpubSha256": "a75e67b99038f83389eaa61c38d09225a0f427c122e89e2d528d84ef7e9802e7"
+    }
+  ]
+}

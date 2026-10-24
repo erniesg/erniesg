@@ -15,6 +15,18 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# The generated pnpm lockfile.
+#
+# `pnpm import` - which is what the host's npm shim runs for a project
+# install - writes `pnpm-lock.yaml` next to `package-lock.json`. It is
+# generated, it is never delivered, and it must never be committed: the
+# repository tracks `package-lock.json`, and a second lockfile is a second,
+# disagreeing statement of the same dependency tree. It is ignored here, and
+# not only in a machine-local exclude, so that a lane or a contributor that
+# regenerates it cannot leave an untracked file behind that a scope proof
+# would have to account for.
+pnpm-lock.yaml
+
 
 # environment variables
 .env

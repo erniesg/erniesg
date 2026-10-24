@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { strFromU8, unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
+import { buildStructEpub as packageBuildStructEpub } from '@erniesg/struct/renderers/epub'
+import { renderPublicationXhtml as packageRenderPublicationXhtml } from '@erniesg/struct/renderers/xhtml'
 import { fixtureFile } from '../../tests/fixtures/pdf-fixtures'
 import { buildStructDocument } from './from-reconstruction'
 import { buildStructEpub } from './epub'
@@ -93,10 +95,32 @@ describe('STRUCT canonical document graph', () => {
         count + (reconstruction.provenance?.[node.id]?.links.length ?? 0),
       0,
     )
+    const sourceInlineRelationshipCount = reconstruction.paper.nodes.reduce(
+      (count, node) =>
+        count +
+        (node.inlineRuns ?? []).filter(
+          (run) =>
+            run.semanticRole !== 'citation' &&
+            run.semanticRole !== 'cross-reference' &&
+            run.semanticRole !== 'note-reference' &&
+            (Boolean(run.href) || (run.targetIds?.length ?? 0) > 0),
+        ).length,
+      0,
+    )
+    // The app's ingress publishes the caption attachment the research graph
+    // declares (`node.relationships.caption`) as a relationship of its own: the
+    // pinned renderer resolves an attached caption ONLY through a matched
+    // `caption` relationship and never by matching caption text, so the
+    // declaration is part of the source relationship set.
+    const sourceCaptionRelationshipCount = reconstruction.paper.nodes.filter(
+      (node) => node.type === 'figure' && node.relationships?.caption,
+    ).length
     const sourceRelationshipCount =
       reconstruction.visualRelationships.length +
       reconstruction.noteRelationships.length +
-      sourceAnnotationCount
+      sourceAnnotationCount +
+      sourceInlineRelationshipCount +
+      sourceCaptionRelationshipCount
 
     expect(graph.schemaVersion).toBe('0.2.0')
     expect(graph.source.format).toBe('docx')
@@ -189,7 +213,7 @@ describe('STRUCT canonical document graph', () => {
   it('pins the structured DOCX receipt', async () => {
     const graph = buildStructDocument(await structuredDocx())
     expect(graph.receipt.generatedSha256).toBe(
-      'fdefd031eb619b48c92f71d6470b96ce91369f8ea41a62e88156fa234e07015f',
+      'fca88686d03f17870b0579f81bfcb5d0547178584f5173f4ba49d972718ae65a',
     )
   })
 
@@ -1225,9 +1249,15 @@ describe('STRUCT canonical document graph', () => {
 
   it('exposes STRUCT at the existing renderer and EPUB entry points', async () => {
     const graph = buildStructDocument(await structuredDocx())
-    expect(renderPublicXhtml(graph)).toBe(renderPublicationXhtml(graph))
+    // The app's renderer and EPUB entry points are the pinned package
+    // renderers since the E-04 import cut. The local copies under
+    // `src/struct/` are stale compatibility copies that E-07 deletes, so they
+    // are no longer the reference for this assertion.
+    expect(renderPublicXhtml(graph)).toBe(
+      packageRenderPublicationXhtml(graph),
+    )
     expect((await buildPublicEpub(graph)).sha256).toBe(
-      (await buildStructEpub(graph)).sha256,
+      (await packageBuildStructEpub(graph)).sha256,
     )
   })
 

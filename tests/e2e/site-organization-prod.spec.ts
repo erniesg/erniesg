@@ -23,7 +23,7 @@ test('production has Blog, Research, About, and Tags navigation and preserves th
   await expect(links).toHaveText(['Blog', 'Research', 'About', 'Tags'])
   await expect(
     page.getByRole('link', {
-      name: 'Struct: Document Reconstruction and Responsive Typesetting',
+      name: 'Struct’s live PDF-import demo',
     }),
   ).toBeVisible()
   await page.goto('/blog/loss-price-love/zh/')
@@ -44,14 +44,7 @@ test('the actual AI sample renders its packaged figures and stylesheet inside th
     route.fulfill({ status: 503, json: { error: { code: 'unavailable' } } }),
   )
   await page.goto('/research/struct/demo/')
-  const sample = page.locator('[data-struct-sample]').filter({
-    has: page.getByRole('heading', {
-      name: 'Docling Technical Report',
-      exact: true,
-    }),
-  })
-  await sample.locator('summary').click()
-  const frame = sample.frameLocator('iframe')
+  const frame = page.frameLocator('[data-struct-preview-frame]')
   await expect(frame.locator('h1')).toContainText('Docling')
   await expect
     .poll(async () =>

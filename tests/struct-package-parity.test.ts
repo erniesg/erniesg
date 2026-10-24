@@ -154,7 +154,7 @@ describe('packed Struct public API parity', () => {
     )
   })
 
-  it.each(['core', 'schema', 'ids', 'bundle'])(
+  it.each(['core', 'schema', 'ids'])(
     'keeps the unavailable public ./%s path closed',
     async (path) => {
       await expect(
@@ -168,4 +168,22 @@ describe('packed Struct public API parity', () => {
       })
     },
   )
+
+  it('exposes the public ./bundle path with the reviewed runtime surface', async () => {
+    const { stdout } = await execFileAsync(process.execPath, [
+      '--input-type=module',
+      '-e',
+      `const bundle = await import('@erniesg/struct/bundle')
+process.stdout.write(JSON.stringify(Object.keys(bundle).sort()))`,
+    ])
+    expect(JSON.parse(stdout)).toEqual([
+      'STRUCT_BUNDLE_LIMITS_PROFILE',
+      'STRUCT_BUNDLE_LIMITS_PROFILE_VERSION',
+      'StructBundleError',
+      'createStructBundle',
+      'decodeStructBundle',
+      'encodeStructBundle',
+      'verifyStructBundle',
+    ])
+  })
 })

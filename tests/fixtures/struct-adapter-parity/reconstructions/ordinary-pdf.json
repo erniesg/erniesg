@@ -1,0 +1,872 @@
+{
+  "source": {
+    "fileName": "born-digital.pdf",
+    "byteLength": 909,
+    "sha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
+    "pageCount": 1,
+    "localOnly": true
+  },
+  "paper": {
+    "id": "pdf-50874645b2cec033",
+    "version": "1.0.0-import",
+    "status": "working",
+    "title": "A Reconstructed Research Paper",
+    "subtitle": "Reconstructed locally from born-digital.pdf",
+    "authors": ["Ada Researcher"],
+    "language": "und",
+    "baseDirection": "unknown",
+    "artifactModifiedAt": "1970-01-01T00:00:00.000Z",
+    "metadataLineage": {
+      "language": {
+        "status": "unresolved",
+        "source": "unproven",
+        "evidence": ["no-authoritative-publication-language"]
+      },
+      "baseDirection": {
+        "status": "unresolved",
+        "source": "unproven",
+        "evidence": ["no-authoritative-base-direction"]
+      },
+      "publicationDate": {
+        "status": "unresolved",
+        "source": "pdf-xmp-not-extracted",
+        "evidence": ["pdf-xmp-metadata-not-extracted"]
+      },
+      "artifactModifiedAt": {
+        "status": "unresolved",
+        "source": "unproven",
+        "evidence": ["artifact-modified-time-unavailable"]
+      }
+    },
+    "updated": "1970-01-01",
+    "abstract": "Ada Researcher",
+    "nodes": [
+      {
+        "id": "sec-001-a-reconstructed-research-paper",
+        "type": "heading",
+        "level": 1,
+        "text": "A Reconstructed Research Paper",
+        "source": "pdf:50874645b2cec033#page=1"
+      },
+      {
+        "id": "p-002-ada-researcher",
+        "type": "paragraph",
+        "text": "Ada Researcher",
+        "source": "pdf:50874645b2cec033#page=1"
+      },
+      {
+        "id": "p-003-this-paragraph-contains-enough-embed",
+        "type": "paragraph",
+        "text": "This paragraph contains enough embedded text to prove local PDF extraction. Bounding boxes remain source evidence while the publication becomes reflowable.",
+        "source": "pdf:50874645b2cec033#page=1"
+      }
+    ]
+  },
+  "pages": [
+    {
+      "page": 1,
+      "kind": "born-digital",
+      "width": 612,
+      "height": 792,
+      "rotation": 0,
+      "textCharacters": 175,
+      "imageCount": 0,
+      "objects": [],
+      "links": [],
+      "runs": [
+        {
+          "page": 1,
+          "text": "A Reconstructed Research Paper",
+          "x": 0.11764705882352941,
+          "y": 0.06060606060606061,
+          "width": 0.5841176470588235,
+          "height": 0.030303030303030304,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 24,
+          "sourceSequenceIndex": 0,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 0,
+            "normalizedTextEnd": 27,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [4],
+            "filterableOperationIndexes": [4]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "Ada Researcher",
+          "x": 0.11764705882352941,
+          "y": 0.12121212121212122,
+          "width": 0.14166666666666664,
+          "height": 0.015151515151515152,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 12,
+          "sourceSequenceIndex": 2,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 27,
+            "normalizedTextEnd": 40,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [9],
+            "filterableOperationIndexes": [9]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "This paragraph contains enough embedded text to prove local PDF extraction.",
+          "x": 0.11764705882352941,
+          "y": 0.17045454545454544,
+          "width": 0.6223986928104569,
+          "height": 0.013888888888888888,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 4,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 40,
+            "normalizedTextEnd": 105,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [14],
+            "filterableOperationIndexes": [14]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "Bounding boxes remain source evidence while the publication becomes reflowable.",
+          "x": 0.11764705882352941,
+          "y": 0.20075757575757575,
+          "width": 0.6613300653594766,
+          "height": 0.013888888888888888,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 5,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 105,
+            "normalizedTextEnd": 175,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [19],
+            "filterableOperationIndexes": [19]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        }
+      ],
+      "renderVisibleTextRuns": [
+        {
+          "page": 1,
+          "text": "A Reconstructed Research Paper",
+          "x": 0.11764705882352941,
+          "y": 0.06060606060606061,
+          "width": 0.5841176470588234,
+          "height": 0.030303030303030304,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 24,
+          "sourceSequenceIndex": 0,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 0,
+            "normalizedTextEnd": 27,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [4],
+            "filterableOperationIndexes": [4]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "Ada Researcher",
+          "x": 0.11764705882352941,
+          "y": 0.12121212121212122,
+          "width": 0.14166666666666664,
+          "height": 0.015151515151515138,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 12,
+          "sourceSequenceIndex": 2,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 27,
+            "normalizedTextEnd": 40,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [9],
+            "filterableOperationIndexes": [9]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "This paragraph contains enough embedded text to prove local PDF extraction.",
+          "x": 0.11764705882352941,
+          "y": 0.17045454545454544,
+          "width": 0.6223986928104569,
+          "height": 0.013888888888888895,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 4,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 40,
+            "normalizedTextEnd": 105,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [14],
+            "filterableOperationIndexes": [14]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "Bounding boxes remain source evidence while the publication becomes reflowable.",
+          "x": 0.11764705882352941,
+          "y": 0.20075757575757575,
+          "width": 0.6613300653594765,
+          "height": 0.013888888888888895,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 5,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 105,
+            "normalizedTextEnd": 175,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [19],
+            "filterableOperationIndexes": [19]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        }
+      ],
+      "spread": {
+        "status": "single",
+        "boundary": null,
+        "confidence": 1,
+        "logicalRegions": []
+      },
+      "assets": []
+    }
+  ],
+  "regions": [
+    {
+      "id": "page-001-region-001",
+      "page": 1,
+      "kind": "body",
+      "column": "single",
+      "text": "A Reconstructed Research Paper",
+      "confidence": 0.9,
+      "box": {
+        "page": 1,
+        "x": 0.11765,
+        "y": 0.06061,
+        "width": 0.58412,
+        "height": 0.0303,
+        "rotation": 0,
+        "method": "pdf-text"
+      },
+      "lines": [
+        {
+          "id": "page-001-line-0001",
+          "text": "A Reconstructed Research Paper",
+          "fontSize": 24,
+          "box": {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.06061,
+            "width": 0.58412,
+            "height": 0.0303,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          "runs": [
+            {
+              "page": 1,
+              "text": "A Reconstructed Research Paper",
+              "x": 0.11764705882352941,
+              "y": 0.06060606060606061,
+              "width": 0.5841176470588235,
+              "height": 0.030303030303030304,
+              "rotation": 0,
+              "method": "pdf-text",
+              "fontName": "Helvetica",
+              "fontSize": 24,
+              "sourceSequenceIndex": 0,
+              "sourceTextPaint": {
+                "algorithm": "pdfjs-text-paint-run-v1",
+                "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+                "normalizedTextStart": 0,
+                "normalizedTextEnd": 27,
+                "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+                "operationIndexes": [4],
+                "filterableOperationIndexes": [4]
+              },
+              "bold": false,
+              "italic": false,
+              "confidence": 1
+            }
+          ],
+          "sourceFragmentLineage": {
+            "algorithm": "source-run-fragment-v1",
+            "sourceLineId": "page-001-line-0001",
+            "fragment": "whole",
+            "sourceSequenceIndexes": [0]
+          }
+        }
+      ],
+      "nativeObjectIds": [],
+      "includedInReadingOrder": true
+    },
+    {
+      "id": "page-001-region-002",
+      "page": 1,
+      "kind": "body",
+      "column": "single",
+      "text": "Ada Researcher",
+      "confidence": 0.9,
+      "box": {
+        "page": 1,
+        "x": 0.11765,
+        "y": 0.12121,
+        "width": 0.14167,
+        "height": 0.01515,
+        "rotation": 0,
+        "method": "pdf-text"
+      },
+      "lines": [
+        {
+          "id": "page-001-line-0002",
+          "text": "Ada Researcher",
+          "fontSize": 12,
+          "box": {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.12121,
+            "width": 0.14167,
+            "height": 0.01515,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          "runs": [
+            {
+              "page": 1,
+              "text": "Ada Researcher",
+              "x": 0.11764705882352941,
+              "y": 0.12121212121212122,
+              "width": 0.14166666666666664,
+              "height": 0.015151515151515152,
+              "rotation": 0,
+              "method": "pdf-text",
+              "fontName": "Helvetica",
+              "fontSize": 12,
+              "sourceSequenceIndex": 2,
+              "sourceTextPaint": {
+                "algorithm": "pdfjs-text-paint-run-v1",
+                "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+                "normalizedTextStart": 27,
+                "normalizedTextEnd": 40,
+                "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+                "operationIndexes": [9],
+                "filterableOperationIndexes": [9]
+              },
+              "bold": false,
+              "italic": false,
+              "confidence": 1
+            }
+          ],
+          "sourceFragmentLineage": {
+            "algorithm": "source-run-fragment-v1",
+            "sourceLineId": "page-001-line-0002",
+            "fragment": "whole",
+            "sourceSequenceIndexes": [2]
+          }
+        }
+      ],
+      "nativeObjectIds": [],
+      "includedInReadingOrder": true
+    },
+    {
+      "id": "page-001-region-003",
+      "page": 1,
+      "kind": "body",
+      "column": "single",
+      "text": "This paragraph contains enough embedded text to prove local PDF extraction. Bounding boxes remain source evidence while the publication becomes reflowable.",
+      "confidence": 0.9,
+      "box": {
+        "page": 1,
+        "x": 0.11765,
+        "y": 0.17045,
+        "width": 0.66133,
+        "height": 0.0442,
+        "rotation": 0,
+        "method": "pdf-text"
+      },
+      "lines": [
+        {
+          "id": "page-001-line-0003",
+          "text": "This paragraph contains enough embedded text to prove local PDF extraction.",
+          "fontSize": 11,
+          "box": {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.17045,
+            "width": 0.6224,
+            "height": 0.01389,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          "runs": [
+            {
+              "page": 1,
+              "text": "This paragraph contains enough embedded text to prove local PDF extraction.",
+              "x": 0.11764705882352941,
+              "y": 0.17045454545454544,
+              "width": 0.6223986928104569,
+              "height": 0.013888888888888888,
+              "rotation": 0,
+              "method": "pdf-text",
+              "fontName": "Helvetica",
+              "fontSize": 11,
+              "sourceSequenceIndex": 4,
+              "sourceTextPaint": {
+                "algorithm": "pdfjs-text-paint-run-v1",
+                "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+                "normalizedTextStart": 40,
+                "normalizedTextEnd": 105,
+                "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+                "operationIndexes": [14],
+                "filterableOperationIndexes": [14]
+              },
+              "bold": false,
+              "italic": false,
+              "confidence": 1
+            }
+          ],
+          "sourceFragmentLineage": {
+            "algorithm": "source-run-fragment-v1",
+            "sourceLineId": "page-001-line-0003",
+            "fragment": "whole",
+            "sourceSequenceIndexes": [4]
+          }
+        },
+        {
+          "id": "page-001-line-0004",
+          "text": "Bounding boxes remain source evidence while the publication becomes reflowable.",
+          "fontSize": 11,
+          "box": {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.20076,
+            "width": 0.66133,
+            "height": 0.01389,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          "runs": [
+            {
+              "page": 1,
+              "text": "Bounding boxes remain source evidence while the publication becomes reflowable.",
+              "x": 0.11764705882352941,
+              "y": 0.20075757575757575,
+              "width": 0.6613300653594766,
+              "height": 0.013888888888888888,
+              "rotation": 0,
+              "method": "pdf-text",
+              "fontName": "Helvetica",
+              "fontSize": 11,
+              "sourceSequenceIndex": 5,
+              "sourceTextPaint": {
+                "algorithm": "pdfjs-text-paint-run-v1",
+                "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+                "normalizedTextStart": 105,
+                "normalizedTextEnd": 175,
+                "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+                "operationIndexes": [19],
+                "filterableOperationIndexes": [19]
+              },
+              "bold": false,
+              "italic": false,
+              "confidence": 1
+            }
+          ],
+          "sourceFragmentLineage": {
+            "algorithm": "source-run-fragment-v1",
+            "sourceLineId": "page-001-line-0004",
+            "fragment": "whole",
+            "sourceSequenceIndexes": [5]
+          }
+        }
+      ],
+      "nativeObjectIds": [],
+      "includedInReadingOrder": true
+    }
+  ],
+  "lineBoundaryDecisions": [
+    {
+      "id": "line-boundary-p001-page-001-line-0003-page-001-line-0004",
+      "page": 1,
+      "regionId": "page-001-region-003",
+      "fromLineId": "page-001-line-0003",
+      "toLineId": "page-001-line-0004",
+      "outcome": "space",
+      "evidence": ["ordinary-wrap"]
+    }
+  ],
+  "sourceSemanticFlowBoundaryDecisions": [],
+  "sourceSemanticFlowBoundaryDecisionCount": 0,
+  "canonicalHyphenBoundaryDecisions": [],
+  "canonicalHyphenBoundaryDecisionCount": 0,
+  "unresolvedCorruptingJoinCount": 0,
+  "structurallyConsumedLineBoundaryCount": 0,
+  "readingOrder": {
+    "schemaVersion": "1.0.0",
+    "regionIds": [
+      "page-001-region-001",
+      "page-001-region-002",
+      "page-001-region-003"
+    ],
+    "order": [
+      "page-001-region-001",
+      "page-001-region-002",
+      "page-001-region-003"
+    ],
+    "edges": [
+      {
+        "id": "reading-edge-0001",
+        "from": "page-001-region-001",
+        "to": "page-001-region-002",
+        "status": "accepted",
+        "confidence": 0.96,
+        "evidence": [
+          {
+            "code": "vertical-flow",
+            "detail": "Regions in the same flow follow normalized vertical geometry."
+          }
+        ],
+        "sourceBoxes": [
+          {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.06061,
+            "width": 0.58412,
+            "height": 0.0303,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.12121,
+            "width": 0.14167,
+            "height": 0.01515,
+            "rotation": 0,
+            "method": "pdf-text"
+          }
+        ]
+      },
+      {
+        "id": "reading-edge-0002",
+        "from": "page-001-region-002",
+        "to": "page-001-region-003",
+        "status": "accepted",
+        "confidence": 0.96,
+        "evidence": [
+          {
+            "code": "vertical-flow",
+            "detail": "Regions in the same flow follow normalized vertical geometry."
+          }
+        ],
+        "sourceBoxes": [
+          {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.12121,
+            "width": 0.14167,
+            "height": 0.01515,
+            "rotation": 0,
+            "method": "pdf-text"
+          },
+          {
+            "page": 1,
+            "x": 0.11765,
+            "y": 0.17045,
+            "width": 0.66133,
+            "height": 0.0442,
+            "rotation": 0,
+            "method": "pdf-text"
+          }
+        ]
+      }
+    ],
+    "resolutions": [],
+    "acyclic": true,
+    "evaluation": {
+      "schemaVersion": "1.0.0",
+      "algorithm": "deterministic-geometry-v1",
+      "mode": "deterministic-only",
+      "regionCount": 3,
+      "acceptedEdgeCount": 2,
+      "unresolvedEdgeCount": 0,
+      "cycleRate": 0,
+      "orderAccuracy": null,
+      "provider": null,
+      "modelVersion": null,
+      "latencyMs": 0,
+      "costUsd": 0,
+      "reviewRequired": false
+    }
+  },
+  "noteRelationships": [],
+  "citationRelationships": [],
+  "crossReferenceRelationships": [],
+  "visualRelationships": [],
+  "assets": [],
+  "provenance": {
+    "sec-001-a-reconstructed-research-paper": {
+      "confidence": 0.9,
+      "pages": [1],
+      "regionIds": ["page-001-region-001"],
+      "boxes": [
+        {
+          "page": 1,
+          "text": "A Reconstructed Research Paper",
+          "x": 0.11765,
+          "y": 0.06061,
+          "width": 0.58412,
+          "height": 0.0303,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 24,
+          "sourceSequenceIndex": 0,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 0,
+            "normalizedTextEnd": 27,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [4],
+            "filterableOperationIndexes": [4]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        }
+      ],
+      "links": []
+    },
+    "p-002-ada-researcher": {
+      "confidence": 0.86,
+      "pages": [1],
+      "regionIds": ["page-001-region-002"],
+      "boxes": [
+        {
+          "page": 1,
+          "text": "Ada Researcher",
+          "x": 0.11765,
+          "y": 0.12121,
+          "width": 0.14167,
+          "height": 0.01515,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 12,
+          "sourceSequenceIndex": 2,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 27,
+            "normalizedTextEnd": 40,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [9],
+            "filterableOperationIndexes": [9]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        }
+      ],
+      "links": []
+    },
+    "p-003-this-paragraph-contains-enough-embed": {
+      "confidence": 0.86,
+      "pages": [1],
+      "regionIds": ["page-001-region-003"],
+      "boxes": [
+        {
+          "page": 1,
+          "text": "This paragraph contains enough embedded text to prove local PDF extraction.",
+          "x": 0.11765,
+          "y": 0.17045,
+          "width": 0.6224,
+          "height": 0.01389,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 4,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 40,
+            "normalizedTextEnd": 105,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [14],
+            "filterableOperationIndexes": [14]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        },
+        {
+          "page": 1,
+          "text": "Bounding boxes remain source evidence while the publication becomes reflowable.",
+          "x": 0.11765,
+          "y": 0.20076,
+          "width": 0.66133,
+          "height": 0.01389,
+          "rotation": 0,
+          "method": "pdf-text",
+          "fontName": "Helvetica",
+          "fontSize": 11,
+          "sourceSequenceIndex": 5,
+          "sourceTextPaint": {
+            "algorithm": "pdfjs-text-paint-run-v1",
+            "textLedgerSha256": "347a5e77adb55607963995bde23eced6781e60a6f58df34c52faf72ef8f5136f",
+            "normalizedTextStart": 105,
+            "normalizedTextEnd": 175,
+            "operatorLedgerSha256": "e3c366e5ed1e664e3c582c889ade38c64c9417d0c0a203b155847bbfdacb6c94",
+            "operationIndexes": [19],
+            "filterableOperationIndexes": [19]
+          },
+          "bold": false,
+          "italic": false,
+          "confidence": 1
+        }
+      ],
+      "links": []
+    }
+  },
+  "humanAdjudications": {
+    "schemaVersion": "1.0.0",
+    "documentSha256": "50874645b2cec033726018c86974241db2048ac46291e02fcb25d3cb7fbaa907",
+    "applied": [],
+    "stale": [],
+    "countsByDiagnosticCode": {}
+  },
+  "diagnostics": [],
+  "semanticSignals": {
+    "captions": 0,
+    "tables": 0,
+    "equations": 0,
+    "citations": 0,
+    "footnoteReferences": 0,
+    "footnotes": 0
+  },
+  "completeness": {
+    "sourceTextCharacters": 173,
+    "outputTextCharacters": 173,
+    "matchedTextCharacters": 173,
+    "textCoverage": 1,
+    "duplicateCanonicalSpanCount": 0,
+    "missingSourceRegionCount": 0,
+    "unprovenancedRenderedUnitCount": 0,
+    "expectedInlineSpanCount": 0,
+    "mappedInlineSpanCount": 0,
+    "inlineSpanCoverage": 1,
+    "expectedHyperlinkCount": 0,
+    "mappedHyperlinkCount": 0,
+    "hyperlinkCoverage": 1,
+    "lineBoundaryCount": 1,
+    "decidedLineBoundaryCount": 1,
+    "unresolvedCorruptingJoinCount": 0,
+    "structurallyConsumedLineBoundaryCount": 0,
+    "sourceAssetCount": 0,
+    "exportedAssetCount": 0,
+    "assetCoverage": 1,
+    "expectedRelationshipCount": 0,
+    "resolvedRelationshipCount": 0,
+    "relationshipCoverage": 1,
+    "expectedSemanticTableCount": 0,
+    "resolvedSemanticTableCount": 0,
+    "semanticTableCoverage": 1,
+    "unresolvedObjectCount": 0,
+    "unresolvedObjects": {
+      "assets": 0,
+      "captions": 0,
+      "tables": 0,
+      "equations": 0,
+      "citations": 0,
+      "footnoteReferences": 0,
+      "footnotes": 0
+    },
+    "ocrRequiredPages": [],
+    "readingOrderDiagnostics": 0,
+    "readingOrderEvaluation": {
+      "schemaVersion": "1.0.0",
+      "algorithm": "deterministic-geometry-v1",
+      "mode": "deterministic-only",
+      "regionCount": 3,
+      "acceptedEdgeCount": 2,
+      "unresolvedEdgeCount": 0,
+      "cycleRate": 0,
+      "orderAccuracy": null,
+      "provider": null,
+      "modelVersion": null,
+      "latencyMs": 0,
+      "costUsd": 0,
+      "reviewRequired": false
+    }
+  },
+  "readiness": {
+    "status": "ready",
+    "ready": true,
+    "policy": {
+      "minimumTextCoverage": 0.98,
+      "minimumAssetCoverage": 1,
+      "minimumRelationshipCoverage": 1,
+      "maximumUnresolvedObjects": 0,
+      "maximumOcrRequiredPages": 0,
+      "maximumReadingOrderDiagnostics": 0
+    },
+    "blockingDiagnosticCodes": []
+  }
+}

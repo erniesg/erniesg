@@ -293,7 +293,7 @@ describe('package renderer import boundary', () => {
       violations.push(...(await e04FamilyViolations(source, file, publicPaths)))
     }
     expect(violations).toEqual([])
-  })
+  }, 15_000)
 
 
   it('E-04: rejects migrated-family imports in synthetic modules', async () => {

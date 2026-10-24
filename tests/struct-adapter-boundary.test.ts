@@ -3635,8 +3635,12 @@ describe('app-owned Struct adapter boundary', () => {
     // The app's own render entry points refuse it as well, so a regression
     // that lets a colliding emitted identifier through the app's
     // `renderPublicationXhtml` or `buildEpub` is caught here.
-    expect(() => appRenderPublicationXhtml(document)).toThrow(/duplicate id/)
-    await expect(appBuildEpub(document)).rejects.toThrow(/duplicate id/)
+    expect(() => appRenderPublicationXhtml(document)).toThrow(
+      /emitted XHTML identifier .* is also used by/,
+    )
+    await expect(appBuildEpub(document)).rejects.toThrow(
+      /emitted XHTML identifier .* is also used by/,
+    )
   })
 
   it('E-03: collects MDX ESM flow blocks wherever they appear in the document', async () => {

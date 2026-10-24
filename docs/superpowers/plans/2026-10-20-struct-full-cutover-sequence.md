@@ -331,20 +331,33 @@ Not migrated (stay app-owned; do not widen the package API for them):
   presentation: it is a source-neutral recovery fact, and it is delegated to
   the package (see the delegation bullet below).
 - **The two same-named `recoverySummary` functions are different functions, and
-  so are the two `hasActionableRecovery` functions.** At this head
-  `src/struct-adapters/recovery.ts` imports **types only** from
-  `@erniesg/struct/document` (`:1-5`); it imports no `./recovery` runtime
-  function from the package. The app implements `diagnosticCategory` (`:285`),
-  `toStructDiagnostic` (`:289`), `recoverySummary` (`:320`), and
-  `hasActionableRecovery` (`:424`) **locally**. The app `recoverySummary`
-  emits enriched titles/summaries, a per-issue `action`, and `userAction`; the
-  package `recoverySummary` emits generic titles/summaries and no
-  `userAction`. The app `hasActionableRecovery` is a **local
-  compatibility/presentation implementation, not a re-export** of the package
-  fact of the same name. That is the current state of the code, and E-03
-  changes it for the actionable-recovery predicate: the app function becomes
-  a **delegation** to the package export (see the delegation bullet below),
-  so the app no longer decides the boolean itself.
+  so are the two `hasActionableRecovery` functions.** The description of the
+  app recovery module that the parent of this branch carried - that it
+  imported **types only** from `@erniesg/struct/document` (`:1-5`), imported no
+  `./recovery` runtime function from the package, and implemented
+  `diagnosticCategory` (`:285`), `toStructDiagnostic` (`:289`),
+  `recoverySummary` (`:320`), and `hasActionableRecovery` (`:424`) **locally**
+  - was true **before** the integrated recovery delegation and is a
+  **historical baseline, not the current state of this head**. The integrated
+  recovery delegation changed it: commit `0aef7178` ("fix(struct): make the
+  package recovery category authoritative at runtime", the replay of
+  `554ce8e2` on this branch) turned the category into a delegation, and commit
+  `4213ff4f` ("fix(struct): delegate the actionable-recovery predicate to the
+  package export", the replay of `d192642d`) did the same for the boolean.
+  **At this head** `src/struct-adapters/recovery.ts` imports **types only**
+  from `@erniesg/struct/document` (`:1-5`) and imports the package runtime
+  functions `diagnosticCategory` and `hasActionableRecovery` from
+  `@erniesg/struct/recovery` (`:6-9`); the app `diagnosticCategory`
+  (`:269-271`) and the app `hasActionableRecovery` (`:414-418`) are
+  **delegations** to those package exports, and the app `toStructDiagnostic`
+  (`:273`) and the app `recoverySummary` (`:304`) stay local and stay
+  app-owned. The app `recoverySummary` emits enriched titles/summaries, a
+  per-issue `action`, and `userAction`; the package `recoverySummary` emits
+  generic titles/summaries and no `userAction`. The app `hasActionableRecovery`
+  is a **facade, not a re-export** of the package fact of the same name: it
+  keeps its signature and its presentation copy and delegates to the package
+  export (see the delegation bullet below), so the app no longer decides the
+  boolean itself.
 - E-03 changes **two** of those four: the app `diagnosticCategory`
   becomes a **delegation** to the package `diagnosticCategory` runtime
   export, so the category stops being an app-owned fact and the app copy
@@ -376,15 +389,15 @@ Not migrated (stay app-owned; do not widen the package API for them):
     (`diagnosticCopy`, `hasActionableRecovery`, `recoverySummary`; the import
     block is at `:59-63` and the two production call sites are at `:1782` and
     `:1858`).
-    At this head the app `hasActionableRecovery` is **locally implemented**
-    (`src/struct-adapters/recovery.ts:424-428`), not re-exported from the
-    package, and it is currently behaviorally aligned with the package fact of
-    the same name (both test whether `userAction` is present). E-03 keeps the
-    app facade and the app presentation copy, but the facade stops being the
-    authority: the app `hasActionableRecovery` becomes a **delegation** to
-    the package runtime export (see the delegation bullet below), so
-    `PublicationImporter` no longer consumes an app-owned copy of a
-    source-neutral fact. (F7/F14)
+    At this head the app `hasActionableRecovery` is a **facade that delegates**
+    (`src/struct-adapters/recovery.ts:414-418`), not a re-export of the
+    package export and no longer a local implementation, so it is behaviorally
+    aligned with the package fact of the same name by construction (the package
+    export tests whether `userAction` is present). E-03 keeps the app facade
+    and the app presentation copy, and the facade is no longer the authority:
+    the app `hasActionableRecovery` is a **delegation** to the package runtime
+    export (see the delegation bullet below), so `PublicationImporter` no
+    longer consumes an app-owned copy of a source-neutral fact. (F7/F14)
 - Do NOT replace the app copy with the package `recoveryFact` title derivation.
   Upstream derives titles internally via `titleFromCode`, which is not a public
   export and must not be imported (package-private path); cite only the
@@ -431,9 +444,11 @@ Not migrated (stay app-owned; do not widen the package API for them):
   Calling the boolean "presentation" does not make the authority
   presentation-specific: without the delegation a future package correction
   could diverge while the app silently retained the old result. This is an
-  **obligation**, not a claim of implementation: at this head the app module
-  imports **types only** from the package (`:1-5`) and no `./recovery`
-  runtime function, so the delegation is **not** in place. (F14)
+  **obligation**, not a claim of implementation: the delegation was **not** in
+  place at the parent of this branch, where the app module imported **types
+  only** from the package (`:1-5`) and no `./recovery` runtime function, and
+  the integrated recovery delegation commits (`0aef7178` and `4213ff4f`; see
+  the integrated-state paragraph below) put it in place at this head. (F14)
 - E-03 work (app UX overlay, preserved): the delegations change the
   **authorities**, not the copy. The app keeps its presentation:
   `diagnosticCopy` (`:278-283`) still returns the app title/message/action,
@@ -477,16 +492,45 @@ Not migrated (stay app-owned; do not widen the package API for them):
   acceptance criterion - the runtime delegation is what discharges the gate.
   (F9/F14)
 - **Status at this head:** the E-03 candidate `ae4638ce`
-  (`feat/struct-e03-core-codecs-ids-order-20261020`) implements the
-  parity-test form only. It leaves `src/struct-adapters/recovery.ts`
+  (`feat/struct-e03-core-codecs-ids-order-20261020`) implemented the
+  parity-test form only. It left `src/struct-adapters/recovery.ts`
   unchanged - still a types-only import from `@erniesg/struct/document` at
   `:1-5`, still a local `diagnosticCategory` at `:285`, still a local
   `hasActionableRecovery` at `:424-428` that imports no `./recovery` runtime
-  function - and adds the guard case "E-03: app diagnostic categories match
+  function - and added the guard case "E-03: app diagnostic categories match
   package recovery facts", which compares the app table against the package
-  export. That candidate therefore does **not** discharge the
+  export. That candidate therefore did **not** discharge the
   production-delegation obligation above, for the category or for the
   actionable-recovery predicate. (F14)
+  **Integrated state at this head:** the restacked E-03 branch
+  (`feat/struct-e03-core-codecs-ids-order-20261021`, replayed onto the
+  post-PR453 main tip `5f8c76ab`) now discharges it. Commit `554ce8e2`
+  ("fix(struct): make the package recovery category authoritative at runtime")
+  imports `diagnosticCategory` from `@erniesg/struct/recovery` as a runtime
+  value (`src/struct-adapters/recovery.ts:6-9` in the integrated file), drops
+  the `category` field from the app copy table (`DIAGNOSTIC_COPY` at `:37-241`,
+  `FALLBACK_COPY` at `:243-249`), and makes the app `diagnosticCategory`
+  (`:269-271`) a delegation to that export, so the package is the single
+  runtime category authority while the app keeps its titles, messages and
+  actions. Commit `d192642d` ("fix(struct): delegate the actionable-recovery
+  predicate to the package export") does the same for the boolean: it imports
+  `hasActionableRecovery` from `@erniesg/struct/recovery` and turns the app
+  facade (`:414-418`) into a delegation to it, keeping the app signature and
+  the app presentation copy. The red-first guard assertions the (F14) anchor
+  names are now in the file it names: `tests/struct-adapter-boundary.test.ts`
+  carries the case "E-03: the production recovery module takes its category
+  and actionable-recovery authority from the package", which asserts the two
+  package runtime imports, the absence of a local `category:` field in the app
+  copy table, and that the app facade delegates instead of deciding either
+  fact; the focused files `tests/struct-recovery-category-authority.test.ts`
+  and `tests/struct-recovery-actionable-authority.test.ts` keep the
+  behavioural cases. **Still outstanding:** these are **source** units on an
+  unmerged branch, not a gate acceptance. The E-03 stage row above is
+  unchanged and still PENDING as a stage gate: the delegation discharges the
+  (F14) production-delegation clause only, and the rest of the E-03 stage
+  evidence - the package/local dual-read equality, the accepted/rejected
+  input matrix, and the high-fan-in consumer enumeration and test - is not
+  produced by these commits and has not been accepted. (F9/F14)
 
 ### Semantic-vs-renderer validation mismatch decision
 

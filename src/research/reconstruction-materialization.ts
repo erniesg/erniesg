@@ -1,6 +1,6 @@
 import { strFromU8, unzipSync } from 'fflate'
 import { buildStructEpub } from '../struct/epub'
-import type { StructDocument } from '../struct/types'
+import type { StructDocument } from '@erniesg/struct/document'
 import type { GroundedStructMaterializationReceipt } from './grounded-struct-materializer'
 import {
   DETERMINISTIC_CHECK_IDS,

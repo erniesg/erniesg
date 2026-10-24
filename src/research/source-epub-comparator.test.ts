@@ -280,7 +280,7 @@ describe('source to rendered EPUB comparator', () => {
       actual: [],
     }))
     expect(() => compareSourceToRenderedEpub(raw)).toThrow(
-      /required/iu,
+      'Invalid source/EPUB comparison input: Invalid input: expected string, received undefined',
     )
 
     const unproved = comparisonInput()

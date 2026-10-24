@@ -1,0 +1,28 @@
+{
+  "adapterRevision": "568d550",
+  "pipeline": "docling-struct-v1",
+  "readiness": {
+    "status": "review-required",
+    "ready": false,
+    "policy": "docling-epub-reader-criteria-v1",
+    "blockingDiagnosticCodes": [
+      "UNRESOLVED_HYPERLINK"
+    ]
+  },
+  "sourceSha256": "3a550d9186655e609bf8e67a226b322a5edce87a7187959dd338b36eca6ca4c8",
+  "artifacts": {
+    "styles.css": "8106cbe6cb6d14ab8d8392d7f99aa5c3f7b4f9f30cebe87ea46c4e7e36b2f83d",
+    "paperpro.epub": "baea58ceb98b3f88dd2c6ad7cda5ad91e2ca2f0f2427b70537f842ac0f33f070",
+    "source.pdf": "3a550d9186655e609bf8e67a226b322a5edce87a7187959dd338b36eca6ca4c8",
+    "papermove.epub": "f5e8c5fcaf678c10597bec8ae35939582c441e002ae4590dae5db2d439134a0a",
+    "content.html": "fe770f57617caca13ae82978d43e7250ba4ef4871db2d2ddb67d34e0200db05d"
+  },
+  "sourceUrl": "https://www.aimustdie.info/assets/AI_Must_Die_v1.4.4.pdf",
+  "authors": [
+    "Myke Walton",
+    "Cam Smith"
+  ],
+  "license": "CC BY-NC-SA 4.0",
+  "changes": "Automatic semantic reconstruction and reflow; HTML and EPUB adaptations retain the source license.",
+  "adaptationNotice": "Attribution and reconstruction notice retained at the end of HTML and in EPUB; no source prose deliberately edited."
+}

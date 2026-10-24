@@ -1,7 +1,11 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { MARGIN_API_PREFIX, MARGIN_HEALTH_PATH, WORKER_FIRST_PREFIXES } from './gate'
+import {
+  MARGIN_API_PREFIX,
+  MARGIN_HEALTH_PATH,
+  WORKER_FIRST_PREFIXES,
+} from './gate'
 
 /** Minimal JSONC reader: drops comments and trailing commas, string-aware. */
 function readJsonc(file: string): Record<string, any> {
@@ -58,19 +62,25 @@ describe('Wrangler configuration', () => {
   )
 
   it.each(Object.entries(configs))(
-    'scopes the %s Worker to the margin API prefix and the auth endpoints only',
+    'routes margin, auth, and the public demo through the %s Worker',
     (_name, config) => {
-      expect(config.assets.run_worker_first).toEqual(
-        WORKER_FIRST_PREFIXES.map((prefix) => `${prefix}/*`),
-      )
+      expect(config.assets.run_worker_first).toEqual([
+        ...WORKER_FIRST_PREFIXES.map((prefix) => `${prefix}/*`),
+        '/api/struct-demo',
+        '/api/struct-demo/*',
+      ])
       expect(MARGIN_HEALTH_PATH.startsWith(`${MARGIN_API_PREFIX}/`)).toBe(true)
     },
   )
 
   it('marks preview as staging and production as production', () => {
-    expect(configs.preview.vars).toEqual({ MARGIN_ENVIRONMENT: 'staging' })
+    expect(configs.preview.vars).toEqual({
+      MARGIN_ENVIRONMENT: 'staging',
+      STRUCT_DEMO_ORIGIN: 'https://pdf2epub.129-150-32-215.sslip.io',
+    })
     expect(configs.production.vars).toEqual({
       MARGIN_ENVIRONMENT: 'production',
+      STRUCT_DEMO_ORIGIN: 'https://pdf2epub.129-150-32-215.sslip.io',
     })
   })
 
@@ -79,6 +89,7 @@ describe('Wrangler configuration', () => {
       const serialized = JSON.stringify(config)
       expect(serialized).not.toContain('WORKOS_')
       expect(serialized).not.toContain('MARGIN_DEV_PRINCIPAL')
+      expect(serialized).not.toContain('STRUCT_DEMO_TOKEN')
     }
   })
 

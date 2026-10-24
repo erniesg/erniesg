@@ -1,0 +1,27 @@
+---
+import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Container from '@/components/Container.astro'
+import StructDemo from '@/components/research/StructDemo.astro'
+import Layout from '@/layouts/Layout.astro'
+import { structSamples } from '@/research/struct-project'
+---
+
+<Layout
+  title="Struct demo"
+  description="Compare source PDFs with Struct reading renditions, or convert your own PDF with a daily allowance."
+  canonicalPath="/research/struct/demo/"
+>
+  <Container class="flex flex-col gap-y-8 pb-24">
+    <Breadcrumbs
+      items={[
+        { label: 'Research', href: '/research/', i18nKey: 'nav.research' },
+        { label: 'Struct', href: '/research/struct/' },
+        { label: 'Struct demo' },
+      ]}
+    />
+    <header class="flex flex-col gap-y-2">
+      <h1 class="text-3xl font-bold">Struct demo</h1>
+    </header>
+    <StructDemo samples={structSamples} />
+  </Container>
+</Layout>

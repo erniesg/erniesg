@@ -1,0 +1,23 @@
+---
+import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Container from '@/components/Container.astro'
+import ResearchProjects from '@/components/research/ResearchProjects.astro'
+import Layout from '@/layouts/Layout.astro'
+---
+
+<Layout title="Research" description="Research papers and work in progress.">
+  <Container class="flex flex-col gap-y-6 pb-24">
+    <Breadcrumbs
+      items={[
+        {
+          label: 'Research',
+          i18nKey: 'nav.research',
+          icon: 'lucide:flask-conical',
+        },
+      ]}
+    />
+    <h1 class="text-3xl font-bold" data-i18n-key="nav.research">Research</h1>
+
+    <ResearchProjects />
+  </Container>
+</Layout>

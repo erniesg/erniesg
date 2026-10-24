@@ -1,0 +1,235 @@
+---
+import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Container from '@/components/Container.astro'
+import Layout from '@/layouts/Layout.astro'
+import { representingTasteProject } from '@/research/representing-taste'
+import { structProject } from '@/research/struct-project'
+---
+
+<Layout
+  title={structProject.title}
+  description={structProject.summary}
+  canonicalPath={structProject.path}
+>
+  <Container class="flex flex-col gap-y-10 pb-24">
+    <Breadcrumbs
+      items={[
+        { label: 'Research', href: '/research/', i18nKey: 'nav.research' },
+        { label: 'Struct' },
+      ]}
+    />
+    <header class="flex flex-col gap-y-4">
+      <p class="text-sm text-muted-foreground">{structProject.status}</p>
+      <h1 class="max-w-3xl text-3xl font-bold">{structProject.title}</h1>
+      <p class="max-w-2xl leading-relaxed">{structProject.summary}</p>
+      <div class="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+        <a
+          class="font-semibold underline underline-offset-4"
+          href={structProject.demoPath}>Try the demo →</a
+        >
+        <a
+          class="underline underline-offset-4"
+          href={representingTasteProject.path}>REPResenting Taste</a
+        >
+        <a class="underline underline-offset-4" href={structProject.repository}
+          >Source code</a
+        >
+        <a
+          class="underline underline-offset-4"
+          href="/research/semantic-responsive-typesetting/"
+          >Early SRT working note</a
+        >
+      </div>
+    </header>
+
+    <div class="prose max-w-[70ch] dark:prose-invert">
+      <h2>Role in REPResenting Taste</h2>
+      <p>
+        Struct is a supporting component of <a
+          href={representingTasteProject.path}>REPResenting Taste</a
+        >. It supplies portable document semantics and rendering capabilities
+        within its existing ownership boundary; it does not supply a claim that
+        the programme’s proposed decision representation is novel or effective.
+      </p>
+      <p>
+        Its existing PDF-import and responsive-reading demo is the programme’s
+        first milestone and remains available at <a
+          href={structProject.demoPath}>the live Struct demo</a
+        >. The demo is an experimental import path for review, not a result of
+        the planned composition-and-revision study.
+      </p>
+
+      <h2>Struct research question</h2>
+      <p>{structProject.question}</p>
+      <p>
+        The proposition is that the document remains a semantic graph. Pages,
+        columns, and line breaks are renditions computed for a reading surface.
+        Stable object identities connect headings, prose, figures, captions,
+        references, and annotations across those renditions.
+      </p>
+
+      <h2>Current research direction</h2>
+      <p>
+        The October 2026 proposal is a reproducible fidelity evaluation loop:
+        compare version-matched PDFs and source HTML with generated Struct,
+        XHTML, and EPUB; keep text flow, figures, tables, equations, references,
+        and navigation separately accountable; and record localized regressions
+        across reading profiles.
+      </p>
+      <p>
+        The adapter is available as an experimental converter. The unified
+        comparison harness, independently adjudicated challenge corpus, and
+        visual-fidelity work are proposals in progress. A successful conversion,
+        a valid EPUB, or a model score alone does not establish faithful
+        reconstruction.
+      </p>
+      <ul>
+        <li>
+          <a href="https://github.com/erniesg/struct/issues/25"
+            >Reproducible evaluation and regression harness</a
+          >: start with an independently reviewed pilot, freeze the evidence,
+          and compare baseline and candidate outputs.
+        </li>
+        <li>
+          <a href="https://github.com/erniesg/struct/issues/26"
+            >Calibrated text-only evaluation</a
+          >: advisory model judgments that require calibration and cannot
+          measure visual or table fidelity.
+        </li>
+        <li>
+          <a href="https://github.com/erniesg/struct/issues/27"
+            >Feedback-derived challenge corpus</a
+          >: separate reported hypotheses, adjudicated cases, and held-out
+          evaluation.
+        </li>
+        <li>
+          <a href="https://github.com/erniesg/struct/issues/28"
+            >Contents hierarchy and navigation</a
+          >, and <a href="https://github.com/erniesg/struct/issues/29"
+            >panels and table styling</a
+          >: preserve source-supported structure and appearance, with
+          reproducible fixtures.
+        </li>
+      </ul>
+
+      <h2>Implementation</h2>
+      <p>
+        Struct supplies a source-neutral document model, validation, and
+        deterministic XHTML and reflowable EPUB rendering. Its reference PDF
+        adapter uses Docling and PDF text, glyph, and link evidence to
+        reconstruct a document before rendering. PDF reconstruction and semantic
+        rendering are separate steps: a valid output file can still contain
+        extraction errors.
+      </p>
+      <p>
+        The public demo exposes the reference PDF-to-EPUB path. The broader
+        research also considers finite-height composition, source provenance,
+        reader position, and annotation preservation. Trying the converter does
+        not establish that all of those hypotheses have been evaluated.
+      </p>
+
+      <h2>Evidence so far</h2>
+      <p>
+        The September adapter work reported 155 of 156 papers passing its
+        applicable source-derived reader checks across four local corpora. That
+        is a historical implementation report, not independent validation of
+        visual fidelity; the original reports were local artifacts and the
+        proposed unified harness remains separate. <a
+          href="https://github.com/erniesg/struct/pull/13"
+          >Adapter report and qualifications</a
+        >.
+      </p>
+      <p>
+        The original engineering benchmark used <strong
+          >one trusted structured fixture with 11 nodes, one relationship, and
+          two annotations</strong
+        >, across mobile, Paper Pro Move, Paper Pro, and print profiles. It
+        recorded preservation of the supplied structure, relationship,
+        annotations, and anchors, with no detected clipping or overlap in that
+        fixture.
+      </p>
+      <p>
+        These are fixture-level engineering checks, not a corpus result or
+        reader study. The recorded timings measure local composition after
+        module initialization, not PDF extraction or end-to-end conversion
+        latency.
+      </p>
+      <p>
+        A separate documented frozen-ten PDF run covered 495 pages. All ten
+        documents remained <strong>review-required</strong>; producing
+        deterministic, valid EPUBs did not make them publication-ready.
+      </p>
+      <ul>
+        <li>
+          <a href="/research/struct/resources/reader-criteria.md"
+            >Reader-facing success criteria and corpus evaluation proposal</a
+          >
+        </li>
+        <li>
+          <a href="/research/struct/resources/benchmark-report.md"
+            >Engineering benchmark report</a
+          >
+        </li>
+        <li>
+          <a href="/research/struct/resources/pdf-ingestion-benchmark.md"
+            >PDF ingestion benchmark and qualifications</a
+          >
+        </li>
+        <li>
+          <a href="/research/struct/resources/limitations.md"
+            >Recorded evaluation limitations</a
+          >
+        </li>
+      </ul>
+
+      <h2>Earlier proposal and prior work</h2>
+      <p>
+        The proposal investigates an integrated system for faithful composition
+        across heterogeneous reading surfaces. Adaptive layout, PDF reflow, and
+        annotation anchoring each have substantial prior art. The literature
+        review is a targeted scoping review, prepared in July 2026, rather than
+        a systematic review or proof of novelty.
+      </p>
+      <ul>
+        <li>
+          <a href="/research/struct/resources/proposal.md"
+            >Proposal and implementation scope</a
+          >
+        </li>
+        <li>
+          <a href="/research/struct/resources/literature-review.md"
+            >Literature review</a
+          >
+        </li>
+        <li>
+          <a href="/research/struct/resources/references.bib" download
+            >References (BibTeX)</a
+          >
+        </li>
+      </ul>
+
+      <h2>Limitations and next questions</h2>
+      <p>
+        Complex tables, equations, reading order, scans, and figure-caption
+        associations can require correction or fall back to image regions.
+        Automated checks do not replace comparison with the original source.
+        Outputs from the demo are for review, rather than automatically approved
+        publications.
+      </p>
+      <p>
+        Further work needs independent source truth, comparisons with relevant
+        baselines, varied document and device evidence, and reader evaluation.
+        The package and public publishing lifecycle remain development work;
+        this page does not claim a registry release or a peer-reviewed result.
+      </p>
+
+      <h2>Try it</h2>
+      <p>
+        <a href={structProject.demoPath}
+          >Explore existing samples or convert your own PDF.</a
+        > Supplied samples are freely readable. Server conversions use a daily allowance
+        shared by visitors on the same network.
+      </p>
+    </div>
+  </Container>
+</Layout>

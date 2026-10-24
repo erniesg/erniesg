@@ -1,0 +1,22 @@
+---
+import Container from '@/components/Container.astro'
+import Layout from '@/layouts/Layout.astro'
+---
+
+<Layout
+  title="Projects"
+  description="Projects and tools will be collected here as they are ready to share."
+  noindex
+>
+  <Container class="flex flex-col gap-y-6 pb-24">
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <h1 class="text-3xl font-bold" data-i18n-key="nav.projects">Projects</h1>
+      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        Projects and tools will be collected here as they are ready to share.
+      </p>
+    </header>
+    <a class="underline underline-offset-4" href="/projects/experiments/"
+      >Experiments →</a
+    >
+  </Container>
+</Layout>

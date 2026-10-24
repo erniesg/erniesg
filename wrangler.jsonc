@@ -10,14 +10,15 @@
   // in the Cloudflare secret store and is never written here.
   "vars": {
     "MARGIN_ENVIRONMENT": "staging",
+    "STRUCT_DEMO_ORIGIN": "https://pdf2epub.129-150-32-215.sslip.io",
   },
-  // The Worker owns the margin API prefix and the AuthKit endpoints, and
-  // nothing else. Every other path stays on the pure static-asset path it was
+  // The Worker owns margin, AuthKit, and the quota-controlled Struct demo.
+  // Every other path stays on the pure static-asset path it was
   // on before `main` was added — the Worker is not invoked for it at all — and
   // naming the prefixes keeps those routes reachable regardless of how
   // `not_found_handling` resolves unmatched requests.
   "assets": {
-    "run_worker_first": ["/api/margin/v1/*", "/auth/*"],
+    "run_worker_first": ["/api/margin/v1/*", "/auth/*", "/api/struct-demo", "/api/struct-demo/*"],
     "binding": "ASSETS",
     "directory": "./dist",
     "not_found_handling": "404-page",

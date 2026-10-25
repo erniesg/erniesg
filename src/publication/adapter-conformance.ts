@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { publicationGraphSchema, serializePublicationGraph, type PublicationGraph, type PublicationNode } from './schema'
 import { createAssetBundle, serializeAssetBundle, type AssetDescriptor } from './asset-bundle'
+import { publicationSourceBindingSchema } from './source-binding'
 import type { PublicationSourceResult } from './source-adapter'
 
 export const PUBLICATION_CONFORMANCE_VERSION = '1.0.0' as const
@@ -447,6 +448,7 @@ export function publicationOutputReceiptContract(receipt: unknown) {
   const allowedReceiptKeys = new Set([
     'version',
     'source',
+    'sourceBinding',
     'profiles',
     'policyVersions',
     'toolchain',
@@ -487,12 +489,18 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     'adapterVersion',
     'sourceType',
     'sourceId',
-    'graphSha256',
-    'assetBundleSha256',
-    'canonicalSubsetSha256',
     'routeParity',
   ] as const
   const optionalSourceStrings = ['sourceRevision', 'mappingVersion'] as const
+  // The graph, asset and canonical-subset digests are diagnostic fields of the
+  // receipt: they describe what the render saw, and they are never the source
+  // identity - the Struct binding is. They stay allowed, they are not
+  // required, and a present one still has to be a well-formed digest.
+  const diagnosticSourceDigests = [
+    'graphSha256',
+    'assetBundleSha256',
+    'canonicalSubsetSha256',
+  ] as const
   if (
     !isRecord(source) ||
     requiredSourceStrings.some(
@@ -501,6 +509,11 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     optionalSourceStrings.some(
       (key) => source[key] !== undefined &&
         (typeof source[key] !== 'string' || source[key].length === 0),
+    ) ||
+    diagnosticSourceDigests.some(
+      (key) =>
+        source[key] !== undefined &&
+        !/^[a-f0-9]{64}$/u.test(String(source[key])),
     ) ||
     !['astro-canonical-route', 'not-applicable', 'adapter-conformance'].includes(
       String(source.routeParity),
@@ -512,10 +525,24 @@ export function publicationOutputReceiptContract(receipt: unknown) {
     !Array.isArray(receipt.artifacts)
   )
     throw new Error('Publication output receipt is missing its shared contract')
+  // The Struct binding is part of the shared contract, not an adapter-private
+  // detail: a receipt that predates it, or that carries one that does not
+  // parse, must not pass silently. The parsed binding is what gets projected,
+  // so two receipts that differ only in their Struct binding are not equal.
+  const sourceBinding = publicationSourceBindingSchema.safeParse(
+    receipt.sourceBinding,
+  )
+  if (!sourceBinding.success)
+    throw new Error('Publication output receipt is missing its shared contract', {
+      cause: sourceBinding.error,
+    })
   return {
     version: receipt.version,
+    sourceBinding: sourceBinding.data,
     sourceAdapterVersion: source.adapterVersion,
-    canonicalSubsetSha256: source.canonicalSubsetSha256,
+    // The graph-derived digests are not part of the compared contract: they
+    // are diagnostics of one render, and the Struct binding is the identity
+    // two equivalent adapters have to share.
     routeParity: source.routeParity,
     profiles: receipt.profiles,
     policyVersions: receipt.policyVersions,

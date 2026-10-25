@@ -24,6 +24,8 @@ jobs:
         with:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+          # Inactivity proofs compare the exact historical migration commits.
+          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4

@@ -986,7 +986,7 @@ describe('isolated Wrangler install', () => {
     )
     const tarballs = localTarballDependencies(lockfile)
     expect(tarballs.map((entry) => entry.path)).toContain(
-      'vendor/struct/erniesg-struct-0.0.0-90f76f1f80b037cc065169d07b13779c03420026.tgz',
+      'vendor/struct/erniesg-struct-0.0.0-3d3a7c95b1c55a9ff4b527eee5acf36c168cd896.tgz',
     )
     for (const entry of tarballs) expect(entry.integrity).toMatch(/^sha512-/)
   })

@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "measuredOn": "2026-10-21",
+  "purpose": "E-04 both-mode parity pilot cases: the same authored content, published once through the legacy ResearchPaper overload of src/research/epub.ts and once through the public StructDocument overload of the same module.",
+  "cases": [
+    {
+      "id": "text-heading-inline-code",
+      "contentKind": "text/heading + inline code",
+      "note": "Both projections below are authored from ONE authored paragraph: the heading 'Deterministic heading' and the sentence 'Call build() with main to continue, then read the reference.' The MDX projection carries the bold mark, the inline-code mark and the external hyperlink. The legacy ResearchPaper projection carries the bold mark and the hyperlink; the legacy ResearchPaper inline-run model (src/research/schema.ts) has NO field for an inline-code mark, so the code span cannot be expressed there.",
+      "mdx": "---\ntitle: Both-mode parity pilot\ndescription: A pilot publication for the both-mode parity evidence.\ndate: 2026-10-21\nauthors:\n  - Ada Example\n---\n\n## Deterministic heading\n\nCall **build()** with `main` to continue, then read [the reference](https://example.com/reference).\n",
+      "legacyPaper": {
+        "id": "both-mode-parity-pilot",
+        "version": "1.0.0",
+        "status": "working",
+        "title": "Both-mode parity pilot",
+        "subtitle": "A pilot publication for the both-mode parity evidence.",
+        "authors": ["Ada Example"],
+        "language": "en",
+        "updated": "2026-10-21",
+        "abstract": "A pilot publication for the both-mode parity evidence.",
+        "nodes": [
+          {
+            "id": "sec-pilot-heading",
+            "type": "heading",
+            "level": 1,
+            "text": "Deterministic heading",
+            "source": "both-mode parity pilot fixture"
+          },
+          {
+            "id": "p-pilot-body",
+            "type": "paragraph",
+            "text": "Call build() with main to continue, then read the reference.",
+            "source": "both-mode parity pilot fixture",
+            "inlineRuns": [
+              { "start": 5, "end": 12, "bold": true },
+              { "start": 18, "end": 22 },
+              {
+                "start": 46,
+                "end": 59,
+                "href": "https://example.com/reference"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

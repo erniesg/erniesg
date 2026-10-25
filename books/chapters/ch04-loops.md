@@ -48,7 +48,7 @@ for payment in payments:
 
 He is under by the fourth payment. `balance` is created once, *before* the
 loop; each time round changes it. Move that first line inside the loop and it
-is built fresh every time, which quietly answers a different question:
+is built fresh every time, so the loop only subtracts the current payment:
 
 ```python run
 balance = 120
@@ -244,8 +244,8 @@ for week in range(5):
     print(week)
 ```
 
-`range(5)` gives five numbers and the last one is 4. This catches everyone
-once. Read `range(5)` as *how many*, never as *up to*.
+`range(5)` gives five numbers and the last one is 4. Read `range(5)` as *how
+many*, never as *up to*.
 
 ```python run
 print(list(range(5)))

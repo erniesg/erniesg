@@ -74,7 +74,10 @@ function casesHtml(groups) {
   }).join('');
 }
 
+import { wireDebugger } from './debugger.mjs';
+
 export function wireInteractive(root, backend) {
+  wireDebugger(root);
   root.querySelectorAll('.walk').forEach(walk => {
     if (once(walk)) return;
     const steps = Number(walk.dataset.steps) || 1;

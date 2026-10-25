@@ -2,7 +2,6 @@
 id = "ch09-stepping"
 kind = "concept"
 title = "Stepping through code"
-figure = "stepping-a-loop"
 
 teaches = ["stepping-through-code"]
 requires = ["ch08-errors"]
@@ -15,8 +14,7 @@ total over days 3 to 7 — five days — and the script answers 22,985. Add the
 five numbers on paper and you get 27,385. The gap is 4,400, which is exactly
 one day's count.
 
-Nothing crashed. There is no traceback to read. A wrong number that looks like
-a right number is the worst kind, because nothing tells you to look.
+The program finishes without an error, but its answer is wrong.
 
 ## Print first
 
@@ -40,8 +38,7 @@ def total_between(first_day, last_day):
 print(total_between(3, 7))
 ```
 
-Reading it again will not tell you much; you already read it once and wrote it.
-So stop reading and make it talk. One `print` inside the loop:
+Print each day and its reading inside the loop:
 
 ```python run
 def total_between(first_day, last_day):
@@ -68,16 +65,16 @@ def total_between(first_day, last_day):
 print(total_between(3, 7))
 ```
 
-27,385. That is the whole technique, and most days it is enough. Print the
-thing you believe, at the place you believe it, and watch the belief fail.
+The corrected loop prints 27,385. Printing intermediate values shows where
+the calculation went wrong.
 
-Two rules keep it useful. **Label every print** — five bare numbers down the
-screen tell you nothing about which is which. **Delete them when you are
-done**, or your program will be shouting at a log file for the next two years.
+**Label debugging prints** so you can identify each value. **Remove them
+when you finish** to keep the output clear.
 
 :::exercise{id="ch09-last-two-days"}
 This should total the last two days, 6610 and 5240, and it does not. Print
-`day` inside the loop to see which days go in, then fix the range.
+`day` inside the loop and click **Run** to see which days go in. Fix the
+range, remove the extra print, then click **Check**.
 
 ```python
 readings = [3120, 4890, 2075, 6610, 5240]
@@ -115,10 +112,9 @@ print(last_n_total(2))
 
 ## Then `breakpoint()`
 
-Prints get tedious when you don't yet know what to print. Then you want to
-stop the program mid-flight and look around.
+Use a debugger to pause the program and inspect its variables.
 
-Put `breakpoint()` on the line before the part you doubt:
+Put `breakpoint()` before the code you want to inspect:
 
 ```python
 def total_between(first_day, last_day):
@@ -129,22 +125,18 @@ def total_between(first_day, last_day):
     return total
 ```
 
-When the program reaches that line it stops and hands you a prompt called
-**pdb** — the debugger built into Python. From there you can look at any name
-and move forward one line at a time.
+At `breakpoint()`, Python pauses and opens **pdb**, its built-in debugger.
+You can inspect variables and run one line at a time.
 
-**You cannot run this on this page.** Every runnable block in this book is
-handed to a fresh Python in the background with nothing typing at it.
-`breakpoint()` would stop and ask a question nobody can answer, and the block
-would sit there until something killed it. So put the code in a file and run
-it from a terminal:
+Try the practice debugger below to learn the commands. To debug your own code,
+save it as `steps.py` and run it in your computer’s Terminal:
 
 ```text
 python3 steps.py
 ```
 
-This is a real session on the broken version, with the file saved as
-`steps.py`. The path will be wherever your own file is.
+:::debugger{id="ch09-pdb"}
+This is a real session on the broken version, saved as `steps.py`.
 
 ```text
 > /Users/erniesg/steps.py(14)total_between()
@@ -176,17 +168,8 @@ This is a real session on the broken version, with the file saved as
 22985
 ```
 
-Line by line. The two lines before the first `(Pdb)` say where you are stopped:
-file, line 14, inside `total_between`, and the `->` line is the line about to
-run — it has not run yet. `l` prints the neighbourhood with `->` marking that
-same line, which is how you get your bearings after wandering. `p first_day,
-last_day` answers `(3, 7)`, which is the moment the bug was catchable: the loop
-is about to run over 3, 4, 5, 6.
-
-`n` moves on one line, into the body of the loop. `s` at that point goes *into*
-`steps_on` instead of over it — `--Call--` means a new call just started. `p
-day` says 3. `c` lets go of the program, which finishes and prints its wrong
-answer.
+The `->` marker points to the line that runs next. The loop uses `range(3, 7)`,
+so it includes days 3, 4, 5 and 6, but skips day 7.
 
 ## Six commands
 
@@ -202,18 +185,11 @@ answer.
 Pressing Enter on an empty prompt repeats the last command, which makes `n` a
 single keystroke once you have typed it once.
 
-`p` takes any expression, not just a name, and it runs that expression right
-there in the middle of your program. That is the part worth remembering:
-you are not reading a snapshot, you are standing inside it.
+`p` shows the value of an expression using the variables at the current line.
+For example, `p day` shows the current day.
 
-One wart: in a live session `q` stops the program by raising `bdb.BdbQuit`, so
-you may see one last traceback on the way out. That one is not your bug.
-
-And delete the `breakpoint()` line when you are done. It will stop a program
-on a server just as happily as it stopped this one.
-
-:::figure{id="stepping-a-loop"}
-The same session, one command at a time.
+Remove `breakpoint()` when you finish debugging. In a real session, `q` stops
+the program and may show a `bdb.BdbQuit` message.
 :::
 
 ## When it already crashed
@@ -235,20 +211,19 @@ Traceback (most recent call last):
 IndexError: list index out of range
 ```
 
-Bottom line first, as always: an index ran off the end of a list. But *which*
-index, and how far off? The traceback does not say, and by the time you read it
-the program is gone.
+The error says a list index is out of range. Use the debugger to find
+the index and the length of the list.
 
-You do not have to re-run it with a `breakpoint()` guessed into the right
-place. Run it under pdb and tell pdb to start by just letting it go:
+Run the program with pdb to inspect variables after a crash:
 
 ```text
 python3 -m pdb -c continue steps.py
 ```
 
-When it blows up, pdb keeps the wreck open and drops you in at the exact frame
-that raised. This is that session:
+When the program crashes, pdb pauses at the line that failed. You can still
+inspect its variables:
 
+:::details{title="Crash-session"}
 ```text
 Traceback (most recent call last):
   File "/Users/erniesg/.pyenv/versions/3.12.8/lib/python3.12/pdb.py", line 1959, in main
@@ -282,23 +257,22 @@ Post mortem debugger finished. The /Users/erniesg/steps.py will be restarted
 -> readings = [
 (Pdb) q
 ```
+:::
 
 The top four frames are pdb's own machinery starting your program. Skip them.
-Your code begins at `File "/Users/erniesg/steps.py", line 18` and the last line
-is the fact, exactly as in the previous chapter.
+Your code begins at `File "/Users/erniesg/steps.py", line 18`. The last line
+names the error.
 
-Then the useful part. `> ... steps.py(8)steps_on()` is pdb putting you inside
-the frame that died, with all its names still alive. `p day` says 10 and `p
+`> ... steps.py(8)steps_on()` shows where the program stopped. `p day` says 10 and `p
 len(readings)` says 10, so the last valid position is 9 and day 10 does not
-exist. Two questions, and now you know whether to widen the list or narrow the
-range.
+exist. The requested range must fit within the list.
 
-`q` at that prompt says the program "will be restarted" and offers a fresh
-prompt at line 1; a second `q` leaves for good.
+The first `q` restarts the program at line 1. Enter `q` again to exit.
 
 :::exercise{id="ch09-lowest-balance"}
-The lowest balance should be 35 and this prints 0. Print `balance` and
-`lowest` each time round, find the wrong starting value, and fix it.
+The lowest balance should be 35, but this prints 0. Print `balance` and
+`lowest` each time and click **Run**. Fix the starting value, remove the extra
+prints, then click **Check**.
 
 ```python
 payments = [20, 35, 10]
@@ -328,20 +302,13 @@ print(lowest)
 ```
 :::
 
-## What this buys the agent
+## How an agent uses this
 
-The agent gets a red test and a traceback, and its first job is to turn "this
-is broken" into "*this line*, with *these values*, is broken". Reading harder
-does not do that. Making the program say what it holds does.
-
-So the agent adds a print, runs the test, reads the output, removes the print.
-Unglamorous and cheap, and it works in a subprocess with no terminal — which
-is exactly the situation the agent is always in. When it cannot get a terminal,
-post-mortem is out and prints are all there is. That is why you learned them
-first.
+When a test fails, the agent uses the traceback to locate the error. It can
+add temporary prints to inspect values, rerun the test, and remove the prints
+after fixing the bug. Print output is useful when an interactive debugger is
+unavailable.
 
 ## Your turn
 
-Two challenges, and both ship you code that is already broken. Your job is to
-find out where, which is the whole skill. The first has hints. The second has
-none — a print in the right place will be faster than staring at it.
+Fix the bugs in two challenges. The first has hints; the second does not.

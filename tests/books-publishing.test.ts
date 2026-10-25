@@ -444,7 +444,9 @@ describe('stable anchors', () => {
           .not.toContain(promise)
         expect(printed, `${id} must not promise a grader in print`).not.toContain(promise)
       }
-      expect(published, `${id} must say where its solution is`).toMatch(/is below|are below/)
+      expect(published, `${id} must expose its worked solution`).toContain(
+        "<details class='solution'><summary>Worked solution",
+      )
     }
 
     const preview = python(RENDER_ONE, [gated[0], 'web', 'yes'])

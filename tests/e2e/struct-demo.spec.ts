@@ -70,16 +70,16 @@ test('unavailable uploads preserve sample browsing and sandbox reflow', async ({
     has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
   })
   await expect(sample).toBeVisible()
-  await expect(
-    sample.getByRole('link', { name: 'Source PDF' }),
-  ).toHaveAttribute('href', /\.pdf$/)
+  await expect(sample.getByRole('link', { name: 'Source PDF' })).toHaveCount(0)
   await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
     'sandbox',
     '',
   )
   await expect(
-    sample.getByRole('link', { name: /EPUB/ }).first(),
-  ).toHaveAttribute('download', '')
+    sample.getByRole('link', { name: 'Download EPUB', exact: true }),
+  ).toHaveAttribute('download', 'ai-must-die.epub')
+  await expect(sample.getByRole('link', { name: /EPUB/ })).toHaveCount(1)
+  await expect(sample).not.toContainText('Free sample')
   await page
     .getByLabel('Existing paper')
     .selectOption('attention-is-all-you-need')
@@ -231,9 +231,7 @@ test('real paper sample credits its authors, source, license, and reconstruction
   const sample = page
     .locator('[data-struct-sample]')
     .filter({ has: page.getByRole('heading', { name: /AI Must Die/i }) })
-  await sample
-    .getByText('Source, credits and review notes', { exact: true })
-    .click()
+  await sample.getByText('Credits', { exact: true }).click()
   await expect(sample).toContainText('Myke Walton')
   await expect(sample).toContainText('Cam Smith')
   await expect(
@@ -276,6 +274,350 @@ test('real paper sample credits its authors, source, license, and reconstruction
     path: '.agent/evidence/struct-demo-desktop.png',
     fullPage: true,
   })
+})
+
+test('compares each sample original beside its reconstruction on desktop and stacks on mobile', async ({
+  page,
+}) => {
+  await setup(page, false)
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  await page.goto('/research/struct/demo/')
+
+  const standardContent = page.locator('[data-struct-standard-content]')
+  const comparison = page.locator('[data-struct-comparison]')
+  const sampleSelect = page.getByLabel('Existing paper')
+  const controls = page.locator('[data-struct-preview-controls]')
+  const original = comparison.getByRole('heading', {
+    name: 'Original',
+    exact: true,
+  })
+  const reconstruction = comparison.getByRole('heading', {
+    name: 'Reconstruction',
+    exact: true,
+  })
+  await expect(original).toBeVisible()
+  await expect(reconstruction).toBeVisible()
+  await expect(standardContent).toBeVisible()
+  await expect(sampleSelect).toBeVisible()
+  await expect(controls).toBeVisible()
+  const uploadDetails = page.locator('details').filter({
+    has: page.getByText('Upload details', { exact: true }),
+  })
+  await expect(uploadDetails).not.toHaveAttribute('open', '')
+  await uploadDetails.getByText('Upload details', { exact: true }).click()
+  await expect(uploadDetails).toHaveAttribute('open', '')
+  await expect(uploadDetails).toContainText('Server conversion: 10 MiB')
+  await expect(uploadDetails).toContainText('3 attempts/network/day')
+  await expect(uploadDetails).toContainText(
+    '20 total/day (UTC), including failures',
+  )
+  await expect(uploadDetails).toContainText('completed files expire after 72h')
+  await expect(uploadDetails).toContainText(
+    'pending jobs remain until complete',
+  )
+  await uploadDetails.getByText('Upload details', { exact: true }).click()
+  await expect(uploadDetails).not.toHaveAttribute('open', '')
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    '/research/struct/samples/docling-technical-report/source.pdf',
+  )
+  const originalCanvas = page.locator('[data-struct-original-frame] canvas')
+  await expect(originalCanvas).toBeVisible()
+  await expect
+    .poll(() =>
+      originalCanvas.evaluate((canvas) => (canvas as HTMLCanvasElement).width),
+    )
+    .toBeGreaterThan(0)
+  await expect(page.getByLabel(/^Original PDF page 1 of/)).toBeVisible()
+
+  const desktopLayout = await page.evaluate(() => {
+    const standard = document.querySelector<HTMLElement>(
+      '[data-struct-standard-content]',
+    )!
+    const comparison = document.querySelector<HTMLElement>(
+      '[data-struct-comparison]',
+    )!
+    const sample = document.querySelector<HTMLElement>(
+      '[data-struct-sample-select]',
+    )!
+    const controls = document.querySelector<HTMLElement>(
+      '[data-struct-preview-controls]',
+    )!
+    const title = document.querySelector('h1')!
+    const upload = document.querySelector<HTMLElement>('[data-struct-form]')!
+    const breadcrumb = document.querySelector('nav')!
+    const bounds = (element: Element) => {
+      const { left, right, width } = element.getBoundingClientRect()
+      return { left, right, width }
+    }
+    return {
+      standard: bounds(standard),
+      comparison: bounds(comparison),
+      sample: bounds(sample),
+      controls: bounds(controls),
+      title: bounds(title),
+      upload: bounds(upload),
+      breadcrumb: bounds(breadcrumb),
+      controlsWrap: getComputedStyle(controls).flexWrap,
+    }
+  })
+  expect(desktopLayout.standard.width).toBeLessThanOrEqual(768)
+  expect(desktopLayout.comparison.width).toBeGreaterThan(
+    desktopLayout.standard.width,
+  )
+  expect(desktopLayout.sample.width).toBeLessThanOrEqual(320)
+  expect(desktopLayout.controlsWrap).toBe('wrap')
+  for (const content of [
+    desktopLayout.breadcrumb,
+    desktopLayout.title,
+    desktopLayout.upload,
+    desktopLayout.sample,
+    desktopLayout.controls,
+  ]) {
+    expect(content.left).toBeGreaterThanOrEqual(desktopLayout.standard.left)
+    expect(content.right).toBeLessThanOrEqual(desktopLayout.standard.right)
+  }
+
+  const desktopPanels = await comparison
+    .locator(':scope > section')
+    .evaluateAll((panels) =>
+      panels.map((panel) => {
+        const { left, top } = panel.getBoundingClientRect()
+        return { left, top }
+      }),
+    )
+  expect(desktopPanels).toHaveLength(2)
+  expect(desktopPanels[0].left).toBeLessThan(desktopPanels[1].left)
+  expect(desktopPanels[0].top).toBe(desktopPanels[1].top)
+
+  await page.getByLabel('Existing paper').selectOption('ai-must-die')
+  const selectedSample = page.locator('[data-struct-sample]').filter({
+    has: page.getByRole('heading', { name: 'AI Must Die', exact: true }),
+  })
+  const selectedPdf = await selectedSample.getAttribute('data-sample-pdf')
+  expect(selectedPdf).toBeTruthy()
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    new RegExp(`${selectedPdf}$`),
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    new RegExp(`${selectedPdf}$`),
+  )
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  const mobilePanels = await comparison
+    .locator(':scope > section')
+    .evaluateAll((panels) =>
+      panels.map((panel) => {
+        const { left, top } = panel.getBoundingClientRect()
+        return { left, top }
+      }),
+    )
+  expect(mobilePanels[0].left).toBe(mobilePanels[1].left)
+  expect(mobilePanels[0].top).toBeLessThan(mobilePanels[1].top)
+  const mobileLayout = await page.evaluate(() => {
+    const standard = document.querySelector<HTMLElement>(
+      '[data-struct-standard-content]',
+    )!
+    const comparison = document.querySelector<HTMLElement>(
+      '[data-struct-comparison]',
+    )!
+    const sample = document.querySelector<HTMLElement>(
+      '[data-struct-sample-select]',
+    )!
+    const bounds = (element: Element) => {
+      const { left, right, width } = element.getBoundingClientRect()
+      return { left, right, width }
+    }
+    return {
+      standard: bounds(standard),
+      comparison: bounds(comparison),
+      sample: bounds(sample),
+      scrolls: document.documentElement.scrollWidth <= innerWidth,
+    }
+  })
+  expect(mobileLayout.scrolls).toBe(true)
+  expect(mobileLayout.comparison.left).toBe(mobileLayout.standard.left)
+  expect(mobileLayout.comparison.right).toBe(mobileLayout.standard.right)
+  expect(mobileLayout.sample.width).toBe(mobileLayout.standard.width)
+})
+
+test('clears the original PDF when an upload preview has no source file', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.goto('/research/struct/demo/')
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    /source\.pdf$/,
+  )
+
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-without-source' },
+      }),
+    ),
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'upload-without-source',
+          html: '<h1>Uploaded reconstruction</h1>',
+          title: 'upload.pdf',
+        },
+      }),
+    ),
+  )
+
+  await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
+  await expect(page.locator('[data-struct-original-frame]')).toBeHidden()
+  await expect(
+    page.locator('[data-struct-original-frame]'),
+  ).not.toHaveAttribute('src')
+  await expect(page.locator('[data-struct-original-link]')).toBeHidden()
+  await expect(page.locator('[data-struct-original-link]')).not.toHaveAttribute(
+    'href',
+  )
+  await expect(page.locator('[data-struct-original-empty]')).toBeVisible()
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .getByRole('heading', { name: 'Uploaded reconstruction' }),
+  ).toBeVisible()
+})
+
+test('resumed paper conversion restores its original sample PDF', async ({
+  page,
+}) => {
+  await setup(page)
+  await page.addInitScript(() => {
+    sessionStorage.setItem('struct-demo-job', 'saved-job')
+    sessionStorage.setItem(
+      'struct-demo-source-sample',
+      JSON.stringify({
+        jobId: 'saved-job',
+        sampleId: 'attention-is-all-you-need',
+      }),
+    )
+  })
+  await page.route('**/api/struct-demo/jobs/saved-job', (route) =>
+    route.fulfill({
+      json: {
+        id: 'saved-job',
+        status: 'done',
+        files: [{ name: 'attention.epub' }],
+      },
+    }),
+  )
+  await page.route(
+    '**/api/struct-demo/jobs/saved-job/files/attention.epub',
+    (route) => route.fulfill({ status: 404 }),
+  )
+  await page.goto('/research/struct/demo/')
+
+  await expect(page.locator('[data-struct-original-frame]')).toHaveAttribute(
+    'src',
+    'https://arxiv.org/pdf/1706.03762v7',
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    'https://arxiv.org/pdf/1706.03762v7',
+  )
+  await expect(
+    page.getByRole('link', { name: 'Download attention.epub' }),
+  ).toBeVisible()
+})
+
+test('keeps an upload source PDF through duplicate starts and replaces it with the selected sample source', async ({
+  page,
+}) => {
+  const sourcePdf = (
+    await readFile('tests/fixtures/pdf/born-digital.pdf')
+  ).toString('base64')
+  await setup(page)
+  await page.goto('/research/struct/demo/')
+
+  await page.evaluate((bytes) => {
+    const binary = atob(bytes)
+    const sourceFile = new File(
+      [Uint8Array.from(binary, (character) => character.charCodeAt(0))],
+      'source.pdf',
+      { type: 'application/pdf' },
+    )
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-with-source', sourceFile },
+      }),
+    )
+  }, sourcePdf)
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'upload-with-source',
+          html: '<h1>Upload reconstruction</h1>',
+          title: 'source.pdf',
+        },
+      }),
+    ),
+  )
+
+  const original = page.locator('[data-struct-original-frame]')
+  await expect(original).toHaveAttribute('src', /^blob:/)
+  const blobSource = await original.getAttribute('src')
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .getByRole('heading', { name: 'Upload reconstruction' }),
+  ).toBeVisible()
+
+  await page.evaluate((bytes) => {
+    const binary = atob(bytes)
+    const sourceFile = new File(
+      [Uint8Array.from(binary, (character) => character.charCodeAt(0))],
+      'source.pdf',
+      { type: 'application/pdf' },
+    )
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-with-source', sourceFile },
+      }),
+    )
+  }, sourcePdf)
+  await expect(original).toHaveAttribute('src', blobSource!)
+
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: {
+          requestId: 'sample-source',
+          sourceSampleId: 'ai-must-die',
+        },
+      }),
+    ),
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'sample-source',
+          html: '<h1>Sample reconstruction</h1>',
+          title: 'AI Must Die.pdf',
+        },
+      }),
+    ),
+  )
+  await expect(original).toHaveAttribute(
+    'src',
+    /\/research\/struct\/samples\/ai-must-die\/source\.pdf$/,
+  )
+  await expect(page.locator('[data-struct-original-link]')).toHaveAttribute(
+    'href',
+    /\/research\/struct\/samples\/ai-must-die\/source\.pdf$/,
+  )
 })
 
 test('converts the pinned paper without a client URL and prevents competing uploads', async ({
@@ -362,8 +704,8 @@ test('paper conversion obeys quota while cached samples remain free', async ({
   await page.getByLabel('Existing paper').selectOption('ai-must-die')
   await expect(page.locator('[data-struct-preview-frame]')).toBeVisible()
   await expect(
-    cached.getByRole('link', { name: 'Paper Pro EPUB', exact: true }),
-  ).toHaveAttribute('download', '')
+    cached.getByRole('link', { name: 'Download EPUB', exact: true }),
+  ).toHaveAttribute('download', 'ai-must-die.epub')
 })
 
 for (const mode of ['upload', 'paper'] as const) {
@@ -422,25 +764,19 @@ for (const mode of ['upload', 'paper'] as const) {
 }
 
 for (const [locale, ready, download, quotaText, invalid] of [
-  [
-    'zh',
-    '转换完成',
-    '下载 paper.epub',
-    '此网络今天还可转换 3 次',
-    '请选择有效的 PDF 文件',
-  ],
+  ['zh', '转换完成', '下载 paper.epub', '3/3（今日）', '请选择有效的 PDF 文件'],
   [
     'ja',
     '変換が完了しました',
     'paper.epub をダウンロード',
-    'このネットワークでは本日あと 3 回',
+    '3/3（今日）',
     '有効な PDF ファイルを選択してください',
   ],
   [
     'ko',
     '변환이 완료되었습니다',
     'paper.epub 다운로드',
-    '이 네트워크에서 오늘 3회',
+    '3/3 (오늘)',
     '유효한 PDF 파일을 선택해 주세요',
   ],
 ] as const) {
@@ -603,13 +939,11 @@ test('uploaded documents use the same sandboxed preview and show a localized fal
   await setup(page)
   await page.goto('/research/struct/demo/')
   await page.evaluate(() =>
-    document
-      .querySelector('[data-struct-demo]')!
-      .dispatchEvent(
-        new CustomEvent('struct:preview-start', {
-          detail: { requestId: 'upload-test' },
-        }),
-      ),
+    document.querySelector('[data-struct-demo]')!.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'upload-test' },
+      }),
+    ),
   )
   await page.evaluate(() =>
     document.querySelector('[data-struct-demo]')!.dispatchEvent(
@@ -653,13 +987,11 @@ for (const outcome of ['success', 'failure'] as const) {
     await setup(page)
     await page.goto('/research/struct/demo/')
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-start', {
-            detail: { requestId: 'A' },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-start', {
+          detail: { requestId: 'A' },
+        }),
+      ),
     )
     await page.getByLabel('Existing paper').selectOption('ai-must-die')
     const detail =
@@ -691,13 +1023,11 @@ for (const outcome of ['success', 'failure'] as const) {
       await page.getByLabel('Existing paper').selectOption('ai-must-die')
     }
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-start', {
-            detail: { requestId: 'B' },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-start', {
+          detail: { requestId: 'B' },
+        }),
+      ),
     )
     await page.evaluate(
       (value) =>
@@ -711,17 +1041,15 @@ for (const outcome of ['success', 'failure'] as const) {
     await expect(page.getByLabel('Existing paper')).toHaveValue('ai-must-die')
     await expect(page.locator('[data-struct-preview-error]')).toBeHidden()
     await page.evaluate(() =>
-      document
-        .querySelector('[data-struct-demo]')!
-        .dispatchEvent(
-          new CustomEvent('struct:preview-ready', {
-            detail: {
-              requestId: 'B',
-              html: '<h1>B result</h1>',
-              title: 'B.pdf',
-            },
-          }),
-        ),
+      document.querySelector('[data-struct-demo]')!.dispatchEvent(
+        new CustomEvent('struct:preview-ready', {
+          detail: {
+            requestId: 'B',
+            html: '<h1>B result</h1>',
+            title: 'B.pdf',
+          },
+        }),
+      ),
     )
     await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
     await expect(page.locator('[data-struct-upload-option]')).toHaveText(
@@ -734,3 +1062,111 @@ for (const outcome of ['success', 'failure'] as const) {
     ).toBeVisible()
   })
 }
+
+test('reader controls reflow samples and uploads at model and custom sizes', async ({
+  page,
+}) => {
+  await setup(page, false)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/research/struct/demo/')
+  const settings = page.locator('[data-struct-reader-settings]')
+  await expect(settings).not.toHaveAttribute('open', '')
+  await expect(page.getByLabel('Device model', { exact: true })).toBeHidden()
+  await settings.locator('summary').click()
+  await expect(page.getByLabel('Device model', { exact: true })).toBeVisible()
+  const frame = page.locator('[data-struct-preview-frame]')
+  const body = page.frameLocator('[data-struct-preview-frame]').locator('body')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('16px')
+  await page.getByRole('button', { name: 'E-ink', exact: true }).click()
+  await page
+    .getByLabel('Device model', { exact: true })
+    .selectOption('remarkable-move')
+  await expect
+    .poll(() => frame.evaluate((el) => (el as HTMLIFrameElement).offsetWidth))
+    .toBe(477)
+  await page.getByLabel('Width (px)', { exact: true }).fill('720')
+  await page.getByLabel('Width (px)', { exact: true }).press('Tab')
+  await expect(page.getByLabel('Device model', { exact: true })).toHaveValue(
+    'custom',
+  )
+  await expect
+    .poll(() => frame.evaluate((el) => (el as HTMLIFrameElement).offsetWidth))
+    .toBe(720)
+  await page.getByLabel('Font size (px)', { exact: true }).fill('24')
+  await page.getByLabel('Font size (px)', { exact: true }).press('Tab')
+  await page.getByLabel('Font family', { exact: true }).selectOption('sans')
+  await page.getByLabel('Margins (px)', { exact: true }).fill('32')
+  await page.getByLabel('Margins (px)', { exact: true }).press('Tab')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('24px')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontFamily))
+    .toContain('Arial')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).paddingLeft))
+    .toBe('32px')
+  await expect
+    .poll(() =>
+      page
+        .frameLocator('[data-struct-preview-frame]')
+        .locator('img')
+        .first()
+        .evaluate((el) => (el as HTMLImageElement).naturalWidth),
+    )
+    .toBeGreaterThan(0)
+  await settings.locator('summary').click()
+  await expect(page.getByLabel('Font family', { exact: true })).toBeHidden()
+  await settings.locator('summary').focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByLabel('Font family', { exact: true })).toHaveValue(
+    'sans',
+  )
+  await page.evaluate(() => {
+    const root = document.querySelector('[data-struct-demo]')!
+    root.dispatchEvent(
+      new CustomEvent('struct:preview-start', {
+        detail: { requestId: 'reader-settings' },
+      }),
+    )
+    root.dispatchEvent(
+      new CustomEvent('struct:preview-ready', {
+        detail: {
+          requestId: 'reader-settings',
+          title: 'Settings test',
+          html: "<!doctype html><html><head><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; script-src 'none'\"></head><body><p>Uploaded reader text</p></body></html>",
+        },
+      }),
+    )
+  })
+  await expect(body).toContainText('Uploaded reader text')
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('24px')
+  await expect(frame).toHaveAttribute('sandbox', '')
+  await expect(
+    page
+      .frameLocator('[data-struct-preview-frame]')
+      .locator('meta[http-equiv="Content-Security-Policy"]'),
+  ).toHaveAttribute('content', /script-src 'none'/)
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  await page.getByRole('button', { name: 'Reset reader', exact: true }).click()
+  await expect(page.getByLabel('Device model', { exact: true })).toHaveValue(
+    'phone',
+  )
+  await expect
+    .poll(() => body.evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe('16px')
+  await expect(body).toContainText('Uploaded reader text')
+  await expect(frame).toHaveAttribute('srcdoc', /Uploaded reader text/)
+  await page.screenshot({
+    path: '.agent/evidence/struct-reader-controls-mobile.png',
+    fullPage: true,
+  })
+})

@@ -154,7 +154,8 @@ describe('main-era production schema branches on Zod 4', () => {
       (vector) => vector.schema === 'annotationBundleSchema',
     )
     const extension = annotations.filter(
-      (vector) => (vector.input as { version?: string }).version === '1.2.0',
+      (vector) =>
+        (vector.input as { version?: string } | null)?.version === '1.2.0',
     )
     expect(extension.map((vector) => vector.id)).toEqual([
       'annotationBundleSchema-10',

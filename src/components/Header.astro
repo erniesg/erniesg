@@ -36,6 +36,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
     <div class="flex flex-wrap items-center justify-between gap-4 py-4">
       <Link
         href="/"
+        data-header-link="/"
         class="flex flex-shrink-0 items-center gap-2 text-xl font-semibold transition-colors duration-300 hover:text-primary"
       >
         <Image src={logo} alt="Logo" class="size-8" />
@@ -47,6 +48,7 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
             NAV_LINKS.map((item) => (
               <Link
                 href={item.href}
+                data-header-link={item.href}
                 class="capitalize text-foreground/60 transition-colors hover:text-foreground/80"
                 data-i18n-key={`nav.${item.label}`}
               >
@@ -55,13 +57,15 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
             ))
           }
         </nav>
-        {/*
+        {
+          /*
           No transition:persist here: the header above persists, and these
           travel with it. Astro moves every persisted element on its own, so a
           persisted island inside a persisted header was moved into the new
           header's discarded copy; Chromium's moveBefore rejects that and the
           swap aborts before the URL changes (#382).
-        */}
+        */
+        }
         <MobileMenu client:load />
         <LanguageToggle client:load />
         <ModeToggle client:load />
@@ -88,37 +92,37 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
   const tagLabelsData = JSON.parse(scriptData.tagLabels ?? '{}')
   const supportedLocaleData = JSON.parse(scriptData.supportedLocales ?? '[]')
   const siteLocaleStorageKey = scriptData.siteLocaleStorageKey ?? ''
-  const legacyBlogLocaleStorageKey =
-    scriptData.legacyBlogLocaleStorageKey ?? ''
+  const legacyBlogLocaleStorageKey = scriptData.legacyBlogLocaleStorageKey ?? ''
   const siteLocaleChangeEvent = scriptData.siteLocaleChangeEvent ?? ''
   const supportedLocaleSet = new Set(supportedLocaleData)
 
-  function getBlogRouteLocale() {
-    const parts = window.location.pathname.split('/').filter(Boolean)
-    if (parts[0] !== 'blog' || parts.length < 2) return null
-
-    const lastPart = parts.at(-1)
-    if (lastPart && supportedLocaleSet.has(lastPart)) return lastPart
-
-    return null
-  }
-
   function getPreferredLocale() {
-    const routeLocale = getBlogRouteLocale()
-    if (routeLocale) {
-      localStorage.setItem(siteLocaleStorageKey, routeLocale)
-      return routeLocale
+    let savedLocale
+    try {
+      savedLocale =
+        localStorage.getItem(siteLocaleStorageKey) ??
+        localStorage.getItem(legacyBlogLocaleStorageKey)
+    } catch {
+      // A blocked storage area does not prevent a native localized document.
     }
+    if (savedLocale && supportedLocaleSet.has(savedLocale)) return savedLocale
 
-    const savedLocale =
-      localStorage.getItem(siteLocaleStorageKey) ??
-      localStorage.getItem(legacyBlogLocaleStorageKey)
-    if (savedLocale && supportedLocaleSet.has(savedLocale)) {
-      localStorage.setItem(siteLocaleStorageKey, savedLocale)
-      return savedLocale
-    }
+    // This marker belongs to the incoming document's Head, which is replaced
+    // even when the Header persists. Chrome updates must not erase its locale.
+    const declaredLocale = (
+      document
+        .querySelector('meta[name="site-document-locale"]')
+        ?.getAttribute('content') ?? document.documentElement.lang
+    )
+      .toLowerCase()
+      .split('-')[0]
+    if (supportedLocaleSet.has(declaredLocale) && declaredLocale !== 'en')
+      return declaredLocale
 
-    return 'en'
+    const browserLocale = navigator.languages
+      ?.map((value) => value.toLowerCase().split('-')[0])
+      .find((value) => supportedLocaleSet.has(value))
+    return browserLocale ?? 'en'
   }
 
   function updateStaticText(locale) {
@@ -204,6 +208,23 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
     })
   }
 
+  document.addEventListener('astro:before-swap', (event) => {
+    // The incoming Header contains links already checked and localized by the
+    // build. Copy those hrefs before Astro discards it in favor of this one.
+    const incomingLinks = new Map(
+      Array.from(
+        event.newDocument.querySelectorAll('header [data-header-link]'),
+      ).map((link) => [
+        link.getAttribute('data-header-link'),
+        link.getAttribute('href'),
+      ]),
+    )
+    document.querySelectorAll('header [data-header-link]').forEach((link) => {
+      const href = incomingLinks.get(link.getAttribute('data-header-link'))
+      if (href) link.setAttribute('href', href)
+    })
+  })
+
   document.addEventListener('astro:page-load', () => {
     const preferredLocale = getPreferredLocale()
     updateStaticText(preferredLocale)
@@ -219,7 +240,11 @@ const siteLocaleChangeEvent = SITE_LOCALE_CHANGE_EVENT
       const choice = target.closest('[data-language-choice]')
       const locale = choice?.getAttribute('data-language-choice')
       if (locale && supportedLocaleSet.has(locale)) {
-        localStorage.setItem(siteLocaleStorageKey, locale)
+        try {
+          localStorage.setItem(siteLocaleStorageKey, locale)
+        } catch {
+          /* Preference storage is optional. */
+        }
       }
     })
 

@@ -1,5 +1,6 @@
 import type { WorkerEnv } from './env'
 import { getPrincipal } from './principal'
+import { handleStructDemoRequest } from './struct-demo'
 import { legacyCookieClears } from './margin/session'
 import { handleAuthRequest } from './margin/auth-routes'
 import { isD1Database } from './margin/d1'
@@ -59,6 +60,10 @@ export default {
 
 async function route(request: Request, env: WorkerEnv): Promise<Response> {
   const { pathname } = new URL(request.url)
+  // Public conversion owns its quota and result access; margin's write gate
+  // must not grant or deny access to this separate service.
+  const demo = await handleStructDemoRequest(request, env)
+  if (demo) return demo
   const auth = await handleAuthRequest(request, env)
   if (auth) return auth
   if (

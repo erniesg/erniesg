@@ -1175,7 +1175,7 @@ export default function ResearchStudio({
               })}
             </ol>
           </section>
-          <a href={`/papers/${paper.id}/manifest.json`}>View layout data →</a>
+          <a href={`/research/${paper.id}/manifest.json`}>View layout data →</a>
         </aside>
       </div>
     </section>

@@ -8,24 +8,70 @@ import {
 import { translationSourceForProvider } from './providers.mjs'
 
 describe('local Codex translation provider', () => {
-  it('builds high-effort read-only codex exec args for structured JSON', () => {
+  it('builds high-effort tool-free Codex args with a fixed permission profile', () => {
     const args = buildCodexExecArgs({
       cwd: '/repo',
       schemaPath: '/tmp/schema.json',
       outputPath: '/tmp/output.json',
       reasoningEffort: 'high',
-      sandbox: 'read-only',
+      sandbox: 'danger-full-access',
       search: true,
       model: 'gpt-5.5',
     })
 
-    expect(args).toContain('--search')
+    expect(args).not.toContain('--search')
     expect(args).toContain('exec')
     expect(args).toContain('--skip-git-repo-check')
     expect(args).toContain('--cd')
     expect(args).toContain('/repo')
-    expect(args).toContain('--sandbox')
-    expect(args).toContain('read-only')
+    expect(args).not.toContain('--sandbox')
+    expect(args).not.toContain('danger-full-access')
+    expect(args).toContain('default_permissions="erniesg-translation"')
+    expect(args).toContain(
+      'permissions.erniesg-translation.network.enabled=false',
+    )
+    expect(args).toContain('web_search="disabled"')
+    expect(args).toContain('approval_policy="never"')
+    expect(args).toContain('mcp_servers.openaiDeveloperDocs.enabled=false')
+    for (const feature of [
+      'shell_tool',
+      'unified_exec',
+      'apps',
+      'plugins',
+      'code_mode_host',
+      'browser_use',
+      'computer_use',
+      'multi_agent',
+      'hooks',
+      'skill_search',
+      'view_image',
+      'image_generation',
+      'workspace_dependencies',
+      'memories',
+      'multi_agent_v2',
+      'browser_use_external',
+      'in_app_browser',
+    ]) {
+      const index = args.indexOf(feature)
+      expect(index).toBeGreaterThan(0)
+      expect(args[index - 1]).toBe('--disable')
+    }
+    const policy = args.find((arg) =>
+      arg.startsWith('permissions.erniesg-translation.filesystem='),
+    )
+    for (const denied of [
+      ':workspace_roots',
+      '/home/ubuntu',
+      '/root',
+      '/tmp',
+      '/opt',
+      '/var',
+      '/proc',
+      '/etc/pdf2epub',
+    ]) {
+      expect(policy).toContain(`"${denied}" = "deny"`)
+    }
+    expect(policy).toContain('":minimal" = "read"')
     expect(args).toContain('--output-schema')
     expect(args).toContain('/tmp/schema.json')
     expect(args).toContain('--output-last-message')
@@ -110,12 +156,15 @@ describe('publish scripts', () => {
     expect(pkg.scripts['translate:codex-revise']).toContain(
       'CODEX_TRANSLATION_MODEL=gpt-5.5',
     )
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-sync')
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-review')
-    expect(pkg.scripts['content:publish']).toContain('translate:codex-revise')
-    expect(
-      pkg.scripts['content:publish'].match(/translate:codex-revise/g),
-    ).toHaveLength(2)
+    expect(pkg.scripts['content:publish']).toContain('build:source-production')
+    expect(pkg.scripts['content:publish']).toContain(
+      'tools/translation/run-publish.mjs',
+    )
+    expect(pkg.scripts['content:publish']).toContain('build:production')
+    expect(pkg.scripts['worker:deploy:production']).toContain('content:publish')
+    expect(pkg.scripts['build:production']).toContain(
+      'tools/translation/pages.mjs apply',
+    )
     expect(pkg.scripts['content:check']).not.toContain('translate:codex-sync')
     expect(pkg.scripts['content:check']).not.toContain(
       'translate:sync -- --write',

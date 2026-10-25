@@ -1,0 +1,60 @@
+{
+  "adapterRevision": "568d550",
+  "pipeline": "docling-struct-v1",
+  "readiness": {
+    "status": "review-required",
+    "ready": false,
+    "policy": "docling-epub-reader-criteria-v1",
+    "blockingDiagnosticCodes": [
+      "INCOMPLETE_ASSET_COVERAGE",
+      "INCOMPLETE_TEXT_COVERAGE"
+    ]
+  },
+  "sourceUrl": "https://arxiv.org/abs/2408.09869v5",
+  "license": "CC BY 4.0",
+  "sourceSha256": "82dd470712ce8389f19f20eb9330475e2166a281f8c7990a9f1d0763d73b4d22",
+  "completeness": {
+    "sourceTextCharacters": 46827,
+    "outputTextCharacters": 23685,
+    "textCoverage": 0.97538,
+    "missingSourceRegionCount": 0,
+    "unresolvedCorruptingJoinCount": 0,
+    "readingOrderDiagnostics": 0,
+    "expectedInlineSpanCount": 0,
+    "inlineSpanCoverage": 1,
+    "expectedHyperlinkCount": 22,
+    "mappedHyperlinkCount": 22,
+    "hyperlinkCoverage": 1.0,
+    "expectedRelationshipCount": 23,
+    "resolvedRelationshipCount": 23,
+    "relationshipCoverage": 1.0,
+    "sourceAssetCount": 5,
+    "exportedAssetCount": 4,
+    "assetCoverage": 0.8,
+    "expectedSemanticTableCount": 2,
+    "resolvedSemanticTableCount": 2,
+    "semanticTableCoverage": 1.0,
+    "unresolvedObjects": {
+      "assets": 1,
+      "captions": 0,
+      "tables": 0,
+      "equations": 0,
+      "citations": 0,
+      "footnoteReferences": 0,
+      "footnotes": 0
+    },
+    "ocrRequiredPages": [],
+    "furnitureExcludedRunCount": 22,
+    "furnitureContaminationCount": 0,
+    "equationCount": 0,
+    "internalLinkAnnotations": 25
+  },
+  "adaptationNotice": "Attribution and reconstruction notice retained at the end of HTML and in EPUB; no source prose deliberately edited.",
+  "artifacts": {
+    "styles.css": "8106cbe6cb6d14ab8d8392d7f99aa5c3f7b4f9f30cebe87ea46c4e7e36b2f83d",
+    "paperpro.epub": "3817ff0e8a900bd56f5b3796a74315ea5fb8c9cea1d9fd976fd61e4f604138ce",
+    "source.pdf": "82dd470712ce8389f19f20eb9330475e2166a281f8c7990a9f1d0763d73b4d22",
+    "papermove.epub": "cebc3d9e0c929f02ba27a1a4b0e7a71745321d0d5451ecc996541812044253ae",
+    "content.html": "f751a822a60f9a0291f38eb00fd34ac5e9fedb93f76b4cb014e334cee6c74ef9"
+  }
+}

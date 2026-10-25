@@ -1,3 +1,5 @@
+import { machineTargetIntegrityIssues } from './check-quality.mjs'
+import { canWriteExistingTarget, sha256 } from './content.mjs'
 import { describe, expect, it } from 'vitest'
 import {
   normalizeReviewResult,
@@ -214,5 +216,40 @@ describe('review advisory reporting', () => {
         ],
       }),
     ).toBe(3)
+  })
+})
+
+describe('read-only machine target integrity', () => {
+  const filePath = 'src/content/blog/x/zh.mdx'
+  const currentText = 'existing reviewed translation'
+
+  it('accepts unchanged classified content while preserving its overwrite prohibition', () => {
+    const target = {
+      status: 'machine',
+      provider: 'codex',
+      model: 'preexisting-machine-translation',
+      targetSha256: sha256(currentText),
+    }
+    expect(
+      machineTargetIntegrityIssues({ filePath, target, currentText }),
+    ).toEqual([])
+    expect(
+      canWriteExistingTarget({
+        filePath,
+        frontmatter: {
+          translationStatus: 'machine',
+          translationSource: 'codex',
+        },
+        manifestTarget: target,
+        currentText,
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects missing records, missing hashes and content drift', () => {
+    for (const target of [null, {}, { targetSha256: sha256('older text') }])
+      expect(
+        machineTargetIntegrityIssues({ filePath, target, currentText }),
+      ).toHaveLength(1)
   })
 })

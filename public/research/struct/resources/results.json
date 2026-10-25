@@ -1,0 +1,266 @@
+{
+  "schemaVersion": "1.0.0",
+  "subject": {
+    "documentId": "semantic-responsive-typesetting",
+    "documentVersion": "0.1.0",
+    "canonicalNodes": 11,
+    "canonicalRelationships": 1,
+    "annotations": 2,
+    "targets": 4,
+    "sampleSize": 1
+  },
+  "method": {
+    "scope": "Engineering POC evaluation of one trusted structured fixture across four target profiles.",
+    "cold": "The first manifest composition for a target after evaluator module initialization; module loading and browser startup are excluded.",
+    "warm": "Median and p95 of repeated manifest compositions in the same process after one unmeasured warm-up composition.",
+    "geometry": "Chromium DOM rectangles plus rendered annotation and anchor state measured from the built Astro page after document fonts are ready, using the recorded CSS-pixel tolerances."
+  },
+  "runtime": {
+    "generatedAt": "2026-07-18T15:42:38.584Z",
+    "node": "v24.14.1",
+    "v8": "13.6.233.17-node.44",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "osRelease": "24.6.0",
+    "cpuModel": "Apple M2 Max",
+    "logicalCpuCount": 12,
+    "totalMemoryMiB": 65536
+  },
+  "browserRuntime": {
+    "browserName": "chromium",
+    "browserVersion": "149.0.7827.55",
+    "viewport": {
+      "width": 1440,
+      "height": 1200
+    },
+    "deviceScaleFactor": 1
+  },
+  "geometryTolerances": {
+    "geometryCssPx": 0.5,
+    "overflowCssPx": 1
+  },
+  "targets": [
+    {
+      "target": "mobile",
+      "structuralCoverage": {
+        "preserved": 11,
+        "expected": 11,
+        "ratio": 1
+      },
+      "relationshipPreservation": {
+        "preserved": 1,
+        "expected": 1,
+        "ratio": 1
+      },
+      "browserGeometry": {
+        "status": "measured",
+        "clippedElements": 0,
+        "overlapPairs": 0,
+        "horizontalOverflows": 0,
+        "orphanedCaptions": 0,
+        "missingNodes": 0,
+        "textLosses": 0,
+        "invalidFragmentLineages": 0
+      },
+      "annotationSurvival": {
+        "preserved": 2,
+        "expected": 2,
+        "ratio": 1
+      },
+      "anchorStability": {
+        "stable": 2,
+        "expected": 2,
+        "ratio": 1,
+        "basis": "Canonical node ID, exact quote, and resolved character range remained unchanged in the target rendition."
+      },
+      "fallbacks": {
+        "composition": 0,
+        "pagination": 0,
+        "total": 0
+      },
+      "compositionTime": {
+        "coldMs": 4.318333,
+        "warmIterations": 50,
+        "warmMedianMs": 0.554,
+        "warmP95Ms": 1.137959
+      }
+    },
+    {
+      "target": "paperProMove",
+      "structuralCoverage": {
+        "preserved": 11,
+        "expected": 11,
+        "ratio": 1
+      },
+      "relationshipPreservation": {
+        "preserved": 1,
+        "expected": 1,
+        "ratio": 1
+      },
+      "browserGeometry": {
+        "status": "measured",
+        "clippedElements": 0,
+        "overlapPairs": 0,
+        "horizontalOverflows": 0,
+        "orphanedCaptions": 0,
+        "missingNodes": 0,
+        "textLosses": 0,
+        "invalidFragmentLineages": 0
+      },
+      "annotationSurvival": {
+        "preserved": 2,
+        "expected": 2,
+        "ratio": 1
+      },
+      "anchorStability": {
+        "stable": 2,
+        "expected": 2,
+        "ratio": 1,
+        "basis": "Canonical node ID, exact quote, and resolved character range remained unchanged in the target rendition."
+      },
+      "fallbacks": {
+        "composition": 1,
+        "pagination": 0,
+        "total": 1
+      },
+      "compositionTime": {
+        "coldMs": 2.136958,
+        "warmIterations": 50,
+        "warmMedianMs": 0.64975,
+        "warmP95Ms": 1.033917
+      }
+    },
+    {
+      "target": "paperPro",
+      "structuralCoverage": {
+        "preserved": 11,
+        "expected": 11,
+        "ratio": 1
+      },
+      "relationshipPreservation": {
+        "preserved": 1,
+        "expected": 1,
+        "ratio": 1
+      },
+      "browserGeometry": {
+        "status": "measured",
+        "clippedElements": 0,
+        "overlapPairs": 0,
+        "horizontalOverflows": 0,
+        "orphanedCaptions": 0,
+        "missingNodes": 0,
+        "textLosses": 0,
+        "invalidFragmentLineages": 0
+      },
+      "annotationSurvival": {
+        "preserved": 2,
+        "expected": 2,
+        "ratio": 1
+      },
+      "anchorStability": {
+        "stable": 2,
+        "expected": 2,
+        "ratio": 1,
+        "basis": "Canonical node ID, exact quote, and resolved character range remained unchanged in the target rendition."
+      },
+      "fallbacks": {
+        "composition": 0,
+        "pagination": 0,
+        "total": 0
+      },
+      "compositionTime": {
+        "coldMs": 0.595125,
+        "warmIterations": 50,
+        "warmMedianMs": 0.538875,
+        "warmP95Ms": 0.893958
+      }
+    },
+    {
+      "target": "print",
+      "structuralCoverage": {
+        "preserved": 11,
+        "expected": 11,
+        "ratio": 1
+      },
+      "relationshipPreservation": {
+        "preserved": 1,
+        "expected": 1,
+        "ratio": 1
+      },
+      "browserGeometry": {
+        "status": "measured",
+        "clippedElements": 0,
+        "overlapPairs": 0,
+        "horizontalOverflows": 0,
+        "orphanedCaptions": 0,
+        "missingNodes": 0,
+        "textLosses": 0,
+        "invalidFragmentLineages": 0
+      },
+      "annotationSurvival": {
+        "preserved": 2,
+        "expected": 2,
+        "ratio": 1
+      },
+      "anchorStability": {
+        "stable": 2,
+        "expected": 2,
+        "ratio": 1,
+        "basis": "Canonical node ID, exact quote, and resolved character range remained unchanged in the target rendition."
+      },
+      "fallbacks": {
+        "composition": 0,
+        "pagination": 0,
+        "total": 0
+      },
+      "compositionTime": {
+        "coldMs": 0.860709,
+        "warmIterations": 50,
+        "warmMedianMs": 0.605083,
+        "warmP95Ms": 0.904833
+      }
+    }
+  ],
+  "baselines": [
+    {
+      "id": "fixed-pdf",
+      "availability": "available",
+      "comparison": "limited",
+      "independence": "same-semantic-source",
+      "evidence": {
+        "pageCount": 3,
+        "byteLength": 4268,
+        "sha256": "2f27c80397c0c8e159df26beba861f272aac9ee294b140ff45ee5c9ce477be42"
+      },
+      "note": "The deterministic fixed PDF is generated from the same canonical fixture. It verifies a fixed-page artifact, not an independent PDF-ingestion baseline."
+    },
+    {
+      "id": "geometric-reflow",
+      "availability": "unavailable",
+      "comparison": "not-run",
+      "note": "No same-content geometric-reflow implementation or validated output exists in this repository, so no score is reported."
+    },
+    {
+      "id": "semantic-rendition",
+      "availability": "available",
+      "comparison": "measured",
+      "targets": [
+        "mobile",
+        "paperProMove",
+        "paperPro",
+        "print"
+      ],
+      "note": "All target metrics in this report come from the canonical graph, layout manifest, annotation resolver, and browser geometry evidence."
+    }
+  ],
+  "novelty": {
+    "qualification": "to our knowledge",
+    "claim": "To our knowledge, the integrated POC remains an apparent gap identified by a targeted scoping review; this is not a systematic-review or publication novelty claim.",
+    "requiredBeforePublication": [
+      "systematic bibliographic database search",
+      "documented screening protocol",
+      "backward citation chaining",
+      "forward citation chaining"
+    ]
+  }
+}

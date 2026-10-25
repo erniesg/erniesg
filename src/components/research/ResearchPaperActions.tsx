@@ -5,7 +5,7 @@ export default function ResearchPaperActions({
 }: {
   paper: ResearchPaper
 }) {
-  const exports = `/papers/${paper.id}/exports`
+  const exports = `/research/${paper.id}/exports`
 
   return (
     <nav aria-label="Paper downloads">

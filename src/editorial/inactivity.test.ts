@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   lstatSync,
@@ -21,8 +21,8 @@ import { describe, expect, it } from 'vitest'
  *
  * The historical anchors below never turn into current-tip allowances.
  * Current source is reconstructed from the validated public/demo base plus
- * the fixed verified Struct delta, six exact byte overrides and a static
- * five-file repair-source receipt. That receipt is source custody, NOT
+ * the fixed verified Struct delta, six exact byte overrides, the fixed
+ * three-path revalidator repair and a static five-file repair-source receipt. That receipt is source custody, NOT
  * semantic acceptance or independent approval of an author updating both
  * source and receipt. Functional/negative gates and exact-head review remain
  * mandatory. No old publisher ancestry or broad editorial exemption is used.
@@ -36,6 +36,7 @@ const PUBLIC_SITE_HEAD = '840540f2139e95cbe54b8270e191f3adb4f3cb38'
 const VALIDATED_BASE = 'e7080488dc481fc046c8b05921c855853c139a32'
 const INTEGRATION_BASE = 'ddbec7e07bbcad8816c89df644ba2dcc076cbf8b'
 const STRUCT_SOURCE = '974735c66a46ecc8a3f2d4128da1893438bc25bf'
+const REVALIDATOR_REPAIR = 'bbc46aadbafa1714152fa6fecf37d0148244ea96'
 const REPAIR_RECEIPT = 'tests/fixtures/struct-restack-repair-source.json'
 const REPAIR_PATHS = [
   'src/annotations/annotation-bundle.test.ts',
@@ -226,6 +227,7 @@ for (const anchor of [
   VALIDATED_BASE,
   INTEGRATION_BASE,
   STRUCT_SOURCE,
+  REVALIDATOR_REPAIR,
 ]) {
   execFileSync('git', ['cat-file', '-e', `${anchor}^{commit}`])
 }
@@ -244,9 +246,9 @@ function blobOf(bytes: Buffer | string): string {
     .digest('hex')
 }
 
-function treeAt(revision: string): SourceTree {
+function treeAt(revision: string, root = PROJECT_ROOT): SourceTree {
   const tree: SourceTree = new Map()
-  const rows = execFileSync('git', ['ls-tree', '-rz', '--full-tree', revision])
+  const rows = execFileSync('git', ['-C', root, 'ls-tree', '-rz', '--full-tree', revision])
     .toString('utf8')
     .split('\0')
     .filter(Boolean)
@@ -273,6 +275,16 @@ function replaceOnce(text: string, before: string, after: string): string {
   if (text.split(before).length !== 2)
     throw new Error('Source override must match exactly once')
   return text.replace(before, after)
+}
+
+/** Copy only the fixed publisher record; retain the two reviewed CI records. */
+function publisherRegistryRecord(text: string): string {
+  const marker = '    {\n      "path": ".github/workflows/agent-evidence-publisher.yml",'
+  const start = text.indexOf(marker)
+  const end = text.indexOf('\n    },\n', start)
+  if (start < 0 || end < start || text.indexOf(marker, start + 1) !== -1)
+    throw new Error('Missing or ambiguous publisher registry record')
+  return text.slice(start, end + '\n    },'.length)
 }
 
 /** Expected bytes come only from immutable inputs, never candidate HEAD. */
@@ -327,7 +339,27 @@ function baselineTree(): SourceTree {
     }
     expected.set(path, { mode: '100644', blob: blobOf(bytes) })
   }
-  if (expected.size !== 1862)
+  const revalidator = treeAt(REVALIDATOR_REPAIR)
+  for (const path of [
+    '.github/workflows/agent-evidence-publisher.yml',
+    'tools/agent-evidence-revalidation.test.mjs',
+  ]) {
+    const entry = revalidator.get(path)
+    if (!entry) throw new Error('Incomplete fixed revalidator source')
+    expected.set(path, entry)
+  }
+  const registryPath = '.agent/authority-workflows.json'
+  const oldRegistry = fileAt(STRUCT_SOURCE, registryPath).toString('utf8')
+  const repairedRegistry = fileAt(REVALIDATOR_REPAIR, registryPath).toString('utf8')
+  expected.set(registryPath, {
+    mode: '100644',
+    blob: blobOf(replaceOnce(
+      oldRegistry,
+      publisherRegistryRecord(oldRegistry),
+      publisherRegistryRecord(repairedRegistry),
+    )),
+  })
+  if (expected.size !== 1863)
     throw new Error('Incomplete immutable source composition')
   return expected
 }
@@ -505,7 +537,8 @@ describe('the inactivity evidence', () => {
   })
 
   it('keeps the complete public route set and bytes on the validated demo base', () => {
-    expect(isAncestor(VALIDATED_BASE)).toBe(true)
+    // Squash removes B from ancestry; the complete route identities below,
+    // immutable composition and projected-squash regression prove provenance.
     expect(isAncestor(PUBLIC_SITE_HEAD)).toBe(false)
     const base = treeAt(VALIDATED_BASE)
     const paths = [...base.keys()]
@@ -520,7 +553,7 @@ describe('the inactivity evidence', () => {
   it('checks the full source composition and fixed repair identities, not path allowances', () => {
     const receipt = readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8')
     const expected = expectedCandidate(receipt)
-    expect(expected.size).toBe(1863)
+    expect(expected.size).toBe(1864)
     assertSourceTree(expected, treeAt('HEAD'))
     assertSourceTree(expected, workingTree())
     assertNoUntracked(gitLines(['ls-files', '--others', '--exclude-standard']))
@@ -550,6 +583,58 @@ describe('the inactivity evidence', () => {
     )
   })
 
+  it('preserves exact source provenance after the configured prerequisite, demo and Struct squashes', () => {
+    expect(readFileSync(resolve(PROJECT_ROOT, '.agent/merge-policy.yaml'), 'utf8'))
+      .toMatch(/^  method: squash$/m)
+    const root = mkdtempSync(join(tmpdir(), 'struct-squash-'))
+    const environment = {
+      PATH: process.env.PATH,
+      HOME: '/nonexistent',
+      LC_ALL: 'C',
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_NO_REPLACE_OBJECTS: '1',
+      GIT_ALLOW_PROTOCOL: 'file',
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: PROJECT_ROOT,
+      GIT_CONFIG_KEY_1: 'core.hooksPath',
+      GIT_CONFIG_VALUE_1: '/dev/null',
+      GIT_AUTHOR_NAME: 'Squash fixture',
+      GIT_AUTHOR_EMAIL: 'fixture@example.invalid',
+      GIT_COMMITTER_NAME: 'Squash fixture',
+      GIT_COMMITTER_EMAIL: 'fixture@example.invalid',
+    }
+    const git = (...args: string[]): string => execFileSync(
+      'git', ['-C', root, ...args],
+      { env: environment, encoding: 'utf8', stdio: 'pipe' },
+    ).trim()
+    try {
+      const head = gitLines(['rev-parse', 'HEAD'])[0]!
+      git('init')
+      git('fetch', '--no-tags', PROJECT_ROOT, head, VALIDATED_BASE, REVALIDATOR_REPAIR)
+      git('checkout', '--detach', `${REVALIDATOR_REPAIR}^`)
+      for (const [revision, name] of [
+        [REVALIDATOR_REPAIR, 'prerequisite'],
+        [VALIDATED_BASE, 'demo'],
+        [head, 'Struct'],
+      ]) {
+        git('merge', '--squash', '--no-edit', revision!)
+        git('commit', '--no-gpg-sign', '-m', `Projected ${name} squash`)
+      }
+      expect(spawnSync('git', [
+        '-C', root, 'merge-base', '--is-ancestor', VALIDATED_BASE, 'HEAD',
+      ], { env: environment }).status).toBe(1)
+      const expected = expectedCandidate(
+        readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8'),
+      )
+      assertSourceTree(expected, treeAt('HEAD', root))
+      assertSourceTree(treeAt(head), treeAt('HEAD', root))
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 30_000)
+
   it('retains the independent historical E05-only scope, not a current editorial exemption', () => {
     const e05Outside = [...e05Delta]
       .filter((path) => !isEditorialScope(path))
@@ -563,6 +648,9 @@ describe('the inactivity evidence', () => {
     )
     const paths = [
       '.agent/audit.json',
+      '.agent/authority-workflows.json',
+      '.github/workflows/agent-evidence-publisher.yml',
+      'tools/agent-evidence-revalidation.test.mjs',
       'src/editorial/records.ts',
       'migrations/editorial/0001_editorial_store.sql',
       'migrations/editorial/0002_editorial_control.sql',

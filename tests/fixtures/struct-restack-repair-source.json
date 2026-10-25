@@ -14,7 +14,7 @@
     },
     "src/editorial/inactivity.test.ts": {
       "mode": "100644",
-      "gitBlob": "75ce2939c1a737f73e2a32de9ac716681c1e7c3f"
+      "gitBlob": "260c79a99ba9d8dd3a67c2ed20f162b674a63e11"
     },
     "tests/zod4-compatibility.test.ts": {
       "mode": "100644",

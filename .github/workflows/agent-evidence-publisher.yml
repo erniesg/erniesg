@@ -46,6 +46,7 @@ jobs:
           ref: refs/pull/${{ github.event.workflow_run.pull_requests[0].number }}/head
           persist-credentials: false
           path: candidate
+          fetch-depth: 0
 
       - name: Bind checked-out candidate to event head
         working-directory: candidate
@@ -258,6 +259,16 @@ jobs:
             echo "Trusted isolation parent must be real root:root mode 0755." >&2
             exit 1
           fi
+          # Keep the original lease/legacy cleanup namespace, but shorten the
+          # execution path so candidate Unix sockets fit even at the ID bounds.
+          readonly execution_parent="/var/lib/rsk"
+          if [ ! -e "$execution_parent" ] && [ ! -L "$execution_parent" ]; then
+            "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_INSTALL" -d -o 0 -g 0 -m 0755 -- "$execution_parent"
+          fi
+          if ! validate_isolation_ancestor 755 "$execution_parent"; then
+            echo "Trusted execution parent must be real root:root mode 0755." >&2
+            exit 1
+          fi
           trusted_owner_uid="$("$RUCKSACK_TRUSTED_ID" -u)"
           trusted_owner_gid="$("$RUCKSACK_TRUSTED_ID" -g)"
           readonly trusted_owner_uid trusted_owner_gid
@@ -274,6 +285,7 @@ jobs:
             echo "Another trusted publisher owns the cleanup lock." >&2
             exit 1
           fi
+          cleanup_stale_isolation_roots() {
           "$RUCKSACK_TRUSTED_SUDO" -n -- "$RUCKSACK_TRUSTED_BASH"             --noprofile --norc -u -o pipefail -c '
               trusted_find=$1
               trusted_realpath=$2
@@ -449,8 +461,11 @@ jobs:
                 "$trusted_rm" -rf -- "$stale_real" >/dev/null 2>&1 || exit 1
                 if [ -e "$stale_real" ] || [ -L "$stale_real" ]; then exit 1; fi
               done
-            ' rucksack-stale-cleanup             "$RUCKSACK_TRUSTED_FIND" "$RUCKSACK_TRUSTED_REALPATH"             "$RUCKSACK_TRUSTED_STAT" "$RUCKSACK_TRUSTED_GETENT"             "$RUCKSACK_TRUSTED_PKILL" "$RUCKSACK_TRUSTED_PGREP"             "$RUCKSACK_TRUSTED_USERDEL" "$RUCKSACK_TRUSTED_GROUPDEL"             "$RUCKSACK_TRUSTED_RM"             "$isolation_parent"
-          isolation_template="$isolation_parent/run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-XXXXXXXXXXXX"
+            ' rucksack-stale-cleanup             "$RUCKSACK_TRUSTED_FIND" "$RUCKSACK_TRUSTED_REALPATH"             "$RUCKSACK_TRUSTED_STAT" "$RUCKSACK_TRUSTED_GETENT"             "$RUCKSACK_TRUSTED_PKILL" "$RUCKSACK_TRUSTED_PGREP"             "$RUCKSACK_TRUSTED_USERDEL" "$RUCKSACK_TRUSTED_GROUPDEL"             "$RUCKSACK_TRUSTED_RM"             "$1"
+          }
+          cleanup_stale_isolation_roots "$isolation_parent"
+          cleanup_stale_isolation_roots "$execution_parent"
+          isolation_template="$execution_parent/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-XXXXXXXXXXXX"
           created_isolation_root=""
           isolation_root=""
           trusted_control_root=""
@@ -720,9 +735,9 @@ jobs:
             fi
             if [ "$cleanup_failure" = 0 ] &&                [ "$cleanup_account_absent" = 1 ] &&                [ "$cleanup_group_absent" = 1 ] &&                [ -n "$cleanup_isolation_root" ]; then
               cleanup_isolation_name="${cleanup_isolation_root##*/}"
-              cleanup_isolation_prefix="run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-"
+              cleanup_isolation_prefix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-"
               cleanup_isolation_nonce="${cleanup_isolation_name#"$cleanup_isolation_prefix"}"
-              if [ "$cleanup_isolation_root" =                    "$isolation_parent/$cleanup_isolation_name" ] &&                  [ "$cleanup_isolation_nonce" != "$cleanup_isolation_name" ] &&                  [ "${#cleanup_isolation_nonce}" -eq 12 ]; then
+              if [ "$cleanup_isolation_root" =                    "$execution_parent/$cleanup_isolation_name" ] &&                  [ "$cleanup_isolation_nonce" != "$cleanup_isolation_name" ] &&                  [ "${#cleanup_isolation_nonce}" -eq 12 ]; then
                 case "$cleanup_isolation_nonce" in
                   ""|*[!A-Za-z0-9]*) cleanup_failure=1 ;;
                   *)
@@ -769,7 +784,7 @@ jobs:
             exit 1
           fi
           isolation_name="${isolation_root##*/}"
-          isolation_prefix="run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}-"
+          isolation_prefix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-"
           isolation_nonce="${isolation_name#"$isolation_prefix"}"
           case "$isolation_nonce" in
             ""|*[!A-Za-z0-9]*)
@@ -777,7 +792,7 @@ jobs:
               exit 1
               ;;
           esac
-          if [ "$isolation_nonce" = "$isolation_name" ] ||              [ "${#isolation_nonce}" -ne 12 ] ||              [ "$isolation_root" != "$isolation_parent/$isolation_name" ]; then
+          if [ "$isolation_nonce" = "$isolation_name" ] ||              [ "${#isolation_nonce}" -ne 12 ] ||              [ "$isolation_root" != "$execution_parent/$isolation_name" ]; then
             echo "Trusted candidate isolation root has an invalid bounded name." >&2
             exit 1
           fi
@@ -2502,6 +2517,34 @@ jobs:
                       return
 
 
+          def wait_and_reap_candidate(child: subprocess.Popen, timeout: float | None) -> int:
+              deadline = None if timeout is None else time.monotonic() + timeout
+              while True:
+                  # Reap adopted descendants while the command is still running.
+                  # WNOWAIT lets Popen retain ownership of its own child's status:
+                  # waitpid(-1) here could otherwise swallow a failing command exit.
+                  # Bound each sweep so a stream of exits cannot starve the deadline.
+                  for _ in range(64):
+                      try:
+                          exited = os.waitid(
+                              os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT
+                          )
+                      except ChildProcessError:
+                          break
+                      if exited is None:
+                          break
+                      if exited.si_pid == child.pid:
+                          child.poll()
+                      else:
+                          os.waitpid(exited.si_pid, os.WNOHANG)
+                  returncode = child.poll()
+                  if returncode is not None:
+                      return returncode
+                  if deadline is not None and time.monotonic() >= deadline:
+                      raise subprocess.TimeoutExpired(child.args, timeout)
+                  time.sleep(0.01)
+
+
           def kill_isolated_group(
               *, sudo: str, pkill: str, process_group: int, required: bool
           ) -> None:
@@ -2696,8 +2739,9 @@ jobs:
                           start_new_session=True,
                       )
                       try:
-                          returncode = child.wait(
-                              timeout=None if timeout_ms is None else timeout_ms / 1000
+                          returncode = wait_and_reap_candidate(
+                              child,
+                              timeout=None if timeout_ms is None else timeout_ms / 1000,
                           )
                       except subprocess.TimeoutExpired:
                           timed_out = True
@@ -4460,8 +4504,10 @@ jobs:
               "--refmap=",
               candidateGitDir,
               expectedHead,
+              "+refs/remotes/origin/*:refs/remotes/origin/*",
+              "+refs/tags/*:refs/tags/*",
             ],
-            "fetch exact candidate commit into repository binding",
+            "fetch exact candidate commit and canonical proof history into repository binding",
           );
           runTrustedGit(
             ["--git-dir", candidateRepositoryPath, "update-ref", "refs/heads/rucksack-exact", expectedHead],

@@ -34,11 +34,11 @@ timeout = 20
 
 :::statement
 A noticeboard site makes each page's web address out of its title. *Reading the
-Deal* becomes `reading-the-deal`. That address is what people paste to each
-other, so it can hold no capitals and no spaces.
+Deal* becomes `reading-the-deal`. People paste that address to each other, so
+it has no capitals or spaces.
 
-Titles are typed by hand, which means spaces on the ends and doubled spaces in
-the middle.
+Titles are typed by hand, so they can have spaces at the ends and doubled
+spaces in the middle.
 
 Given a title, return its slug: the words of the title, lowercased, joined by
 single hyphens.
@@ -51,7 +51,7 @@ output: the slug as text
 
 :::constraints
 - `title` is 0 to 200 characters.
-- It holds only English letters, digits and spaces. No punctuation arrives.
+- It holds only English letters, digits and spaces. No punctuation.
 - Words are separated by one or more spaces, and there may be spaces at either
   end.
 - The slug is lowercase, with exactly one hyphen between words and none at
@@ -69,7 +69,7 @@ output: the slug as text
 :::
 
 :::figure{id="text-pipeline"}
-Each step hands back a new string. The title you were given is never touched.
+Each step returns a new string. The title you were given does not change.
 :::
 
 :::run{starter="starter.py"}
@@ -77,18 +77,17 @@ Each step hands back a new string. The title you were given is never touched.
 
 :::hint{level=1}
 `.split()` with nothing in the brackets is not the same as `.split(" ")`. Try
-both on `"  Two   Pointers  "` and read the two lists carefully.
+both on `"  Two   Pointers  "` and compare the two lists.
 :::
 
 :::hint{level=2}
-`"-".join(words)` glues a list of strings back together with one hyphen between
-each. The glue goes on the outside, the list on the inside.
+`"-".join(words)` joins a list of strings with one hyphen between each. The
+hyphen goes before the dot and the list in the brackets.
 :::
 
 :::hint{level=3}
-Lowercase once — on the whole title before splitting, or on each word after.
-And `"-".join([])` is `""`, which is already the answer for a title with no
-words, so that case needs no code of its own.
+Lowercase once: the whole title before splitting, or each word after.
+`"-".join([])` is `""`, which is already the answer for a title with no words.
 :::
 
 :::solution
@@ -97,27 +96,26 @@ def title_to_slug(title):
     return "-".join(title.lower().split())
 ```
 
-**Read it inside out.** `title.lower()` makes a new string in lowercase.
-`.split()` on that returns the words, with every run of spaces treated as one
-separator and the empty pieces thrown away — which is why the stray ends and
-the doubled middles never reach your code. `"-".join(...)` puts a single hyphen
-between what is left.
+**Read it from the inside out.** `title.lower()` makes a new, lowercase
+string. `.split()` returns its words. It treats each run of spaces as one
+separator and drops empty pieces, so stray spaces never reach your code.
+`"-".join(...)` puts a single hyphen between the words.
 
 **Why the empty title needs no `if`.** `"   ".split()` is `[]`, and joining an
-empty list gives `""`. The case that looks special isn't.
+empty list gives `""`.
 
-**The version that nearly works.**
+**A version that nearly works.**
 
 ```python
 def title_to_slug(title):
     return title.lower().replace(" ", "-")   # do not do this
 ```
 
-It handles the first sample and fails the second: `"  Two   Pointers  "` comes
-out as `"--two---pointers--"`, because `replace` swaps every space one for one
-and has no idea that three in a row were one gap. `split` knows.
+It fails the second sample: `"  Two   Pointers  "` comes out as
+`"--two---pointers--"`. `replace` turns every space into a hyphen. It does not
+know that three spaces in a row are one gap. `split` does.
 
-**Nothing was edited.** `title` is exactly what the caller passed in, still. You
-made three new strings and returned the last one; strings leave you no other
-option.
+**Nothing was changed.** `title` is still what the caller passed in. You made
+three new strings and returned the last one. Strings cannot be changed in
+place.
 :::

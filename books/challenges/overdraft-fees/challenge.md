@@ -33,16 +33,16 @@ timeout = 5
 +++
 
 :::statement
-An account starts the month with some number of cents in it, and a list of
-payments goes out of it in order. After each payment, if the balance is below
-zero, the bank charges 800 cents. It charges on every payment that leaves the
-balance below zero, not once a month. The charge is recorded, not taken out of
-the account, so it does not change the balance.
+An account starts the month with some number of cents, and a list of payments
+goes out of it in order. After each payment, if the balance is below zero, the
+bank charges 800 cents. It charges on every payment that leaves the balance
+below zero, not once a month. The charge is recorded but not taken out of the
+account, so it does not change the balance.
 
 Return two numbers: the total charged, and the lowest the balance ever reached.
 
-The starting balance counts as a balance the account reached, so with no
-payments at all the lowest is where it started.
+The starting balance counts as a balance the account reached. With no
+payments, the lowest is the starting balance.
 :::
 
 :::io
@@ -73,19 +73,20 @@ output: a pair — total cents charged, and the lowest balance reached
 :::
 
 :::hint{level=1}
-One pass through the list. Three names live outside the loop: the running
-balance, the lowest balance seen, and the total charged.
+One pass through the list. Keep three names outside the loop: the running
+balance, the lowest so far, and the total charged.
 :::
 
 :::hint{level=2}
 `lowest` has to start at a balance that really happened, and `start` is one.
-Start it at 0 and an account that never went under 100 would report a low of 0.
+If it starts at 0, an account that never went below 100 would report a low
+of 0.
 :::
 
 :::hint{level=3}
-Both checks happen *after* the subtraction, on the new balance. And if all
-three names are set up before the loop, the empty list needs no special case at
-all — the loop simply does not run.
+Both checks happen *after* the subtraction, on the new balance. If all three
+names are set before the loop, the empty list needs no special case. The loop
+just does not run.
 :::
 
 :::solution
@@ -103,27 +104,23 @@ def overdraft_cost(start, payments):
     return (charged, lowest)
 ```
 
-**One pass, three names.** Each time round updates the balance, then asks two
-questions about the new balance. Neither question needs to look back at earlier
-payments, which is why nothing has to be stored and why 100,000 payments cost
-the same per item as five.
+**One pass, three names.** Each time round, the loop updates the balance and
+asks two questions about it. Neither looks back at earlier payments, so
+nothing has to be stored. Each payment costs the same whether there are five
+or 100,000.
 
 **Why `lowest` starts at `start`.** The statement says the starting balance
-counts. It also has to, or the function would be unanswerable for an empty
-list: there is no "lowest payment result" when no payment happened. Setting
-both `balance` and `lowest` to `start` before the loop makes the empty case
-fall out on its own, with no `if len(payments) == 0` anywhere.
+counts. Without it, an empty list would have no answer, because no payment
+happened. Setting both `balance` and `lowest` to `start` before the loop
+handles the empty case with no `if len(payments) == 0`.
 
-**Two separate ifs, not `elif`.** A payment can both set a new low and land
-below zero, and it usually does. Chain the two checks with `elif` and the first
-sample returns `(0, -4200)`: every payment set a new low, so the charge branch
-was never reached even once. Two questions about the same value are two `if`
-statements.
+**Two separate ifs, not `elif`.** A payment can set a new low and also leave
+the balance below zero, and it usually does. With `elif`, the first sample
+returns `(0, -4200)`. Every payment set a new low, so the charge branch never
+ran. Two questions about the same value need two `if` statements.
 
-**The slow version that looks tidy.** Working out the balance after payment `i`
-as `start - sum(payments[:i])` is correct and reads well. It also rebuilds and
-re-adds a growing slice every time round: at 100,000 payments that is about
-five billion additions. The perf tier is one call at the size limit, and it is
-there to find exactly this. A running total is the fix, and it is the whole
-point of the chapter.
+**The slow version.** Working out the balance after payment `i` as
+`start - sum(payments[:i])` is correct and reads well. But it adds up a longer
+slice each time round: about five billion additions at 100,000 payments. The
+perf tier is one call at the size limit, and this version fails it. A running total is the fix, and it is what the chapter teaches.
 :::

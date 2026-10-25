@@ -37,8 +37,8 @@ A till reads prices off labels, so every price arrives as text: `"4"`, not `4`.
 Given a price as text and a quantity as a whole number, work out the total as a
 number.
 
-The point is the crossing between kinds. `"4" * 3` is legal Python and gives
-you `"444"`, which is not what the customer owes.
+The task is converting between kinds of value. `"4" * 3` is valid Python, but
+it gives `"444"`, not what the customer owes.
 :::
 
 :::io
@@ -81,16 +81,14 @@ def shop_total(price_text, quantity):
     return int(price_text) * quantity
 ```
 
-**Walk it through.** `int(price_text)` crosses from text to number: the three
-characters `"25"` become the value `25`. Now `*` means multiply rather than
-repeat, and `25 * 4` is `100`.
+**Walk it through.** `int(price_text)` converts text to a number: the text
+`"25"` becomes the value `25`. Now `*` multiplies instead of repeating, and
+`25 * 4` is `100`.
 
-Leave out the `int` and the tests fail loudly rather than quietly: `"25" * 4`
-returns `"25252525"`, which is text, and the public tier compares it against
-`100` and finds them different. That is the whole lesson — the operator did
-exactly what it was told, for the kind of value it was given.
+Without the `int`, `"25" * 4` returns the text `"25252525"`. The edge tier
+expects `100`, so the test fails. `*` did what it does for the kind of value it
+was given.
 
-**Zero is worth a look.** `"0"` becomes `0`, and anything times zero is zero,
-so both zero cases fall out without special handling. Code that needs an `if`
-for zero here is usually code that forgot to convert.
+**Zero is worth a look.** `"0"` becomes `0`, and anything times zero is zero.
+So both zero cases work without an `if`.
 :::

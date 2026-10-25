@@ -33,16 +33,14 @@ timeout = 10
 +++
 
 :::statement
-A sign-up sheet is typed in by hand, so the entries arrive untidy: stray
-spaces around some names, and a few lines where somebody hit return and wrote
-nothing.
+A sign-up sheet is typed in by hand. Some names have stray spaces around them,
+and some lines are blank.
 
-Return a **new** list with the same names in the same order, each trimmed of
-the spaces around it, and with the blank entries dropped. An entry that is
-nothing but spaces counts as blank.
+Return a **new** list with the same names in the same order. Trim the spaces
+around each name and drop blank entries. An entry of only spaces is blank.
 
-The list you were handed must come back exactly as it arrived. Other parts of
-the club's program are still holding it.
+The list you were given must not change. Other parts of the club's program
+still use it.
 :::
 
 :::io
@@ -67,41 +65,39 @@ output: a new list of text: the trimmed, non-blank entries, in their original or
 :::
 
 :::figure{id="six-idioms"}
-Building a new list is the first habit in this list, and the only one here
-that is about correctness rather than reading.
+Building a new list is the first habit in the figure. It is the only one that
+is about correctness. The others are about readability.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-`"  mia ".strip()` gives `"mia"`. Now ask what `"   ".strip()` gives, and
-whether `if` treats that result as true or false.
+`"  mia ".strip()` gives `"mia"`. What does `"   ".strip()` give? Does `if`
+treat that result as true or false?
 :::
 
 :::hint{level=2}
-Two things must not appear in your answer: `names.remove(...)` and
-`names[i] = ...`. Both change the caller's list. Start an empty list of your
-own and `append` to it, or write a comprehension — a comprehension always
-builds a new list, so it cannot get this wrong.
+`names.remove(...)` and `names[i] = ...` both change the caller's list. Instead,
+`append` to an empty list of your own, or write a comprehension, which always
+builds a new list.
 :::
 
 :::hint{level=3}
-Deleting from a list while you walk it skips entries. If `names` is
-`["", "", "ada"]` and you remove the first blank, everything shifts left, the
-loop moves on, and the second blank is never looked at. This is why the
-stress tier feeds you runs of consecutive blanks.
+Deleting from a list while you loop over it skips entries. Say `names` is
+`["", "", "ada"]` and you remove the first blank. Everything shifts left, the
+loop moves on, and the second blank is never looked at. That is why the stress
+tier tests runs of blanks.
 :::
 
 :::hint{level=4}
-A comprehension can call `strip` twice — once to decide, once to keep:
+A comprehension can call `strip` twice, once to decide and once to keep:
 
 ```
 [<the trimmed name> for name in names if <the trimmed name>]
 ```
 
-Two strips per entry is still one pass over the list, which is fine at
-200,000 entries.
+That is still one pass over the list, which is fine at 200,000 entries.
 :::
 
 :::solution
@@ -110,18 +106,16 @@ def tidy_names(names):
     return [name.strip() for name in names if name.strip()]
 ```
 
-**Why this cannot touch the caller's list.** A comprehension reads `names` and
-builds somewhere else. There is no assignment into `names` and no method call
-on it, so the list the club is holding comes back byte for byte as it went in.
-That is the whole contract, and it falls out of the shape of the code rather
-than being something you have to remember.
+**Why this cannot change the caller's list.** A comprehension reads `names`
+and builds a new list. Nothing is assigned into `names` and no method is called
+on it, so the club's list stays as it was.
 
 **Why `if name.strip()` and not `if name != ""`.** An entry of three spaces is
-not equal to `""`, so the second test keeps it, and you end up with a name made
-of nothing. Trim first, then ask whether anything survived. Empty text is
-false, so `if name.strip()` reads as "if there is anything left".
+not equal to `""`, so the second test keeps it as a name. Trim first, then
+check. Empty text is false, so `if name.strip()` means "if there is anything
+left".
 
-**The version that looks right and is not:**
+**A version that looks right but is not:**
 
 ```python
 def tidy_names(names):
@@ -133,14 +127,12 @@ def tidy_names(names):
     return names
 ```
 
-This passes the public tier. It has two bugs anyway.
+This passes the public tier, but it has two bugs.
 
-It changes the caller's list, which is the thing you were told not to do — the
-edge tier catches that on its first check. And removing during a walk shifts
-everything left, so on `["", "", "ada"]` it removes the first blank, the loop
-moves on to position 1, and the blank that slid into position 0 is never
-looked at again. The stress tier finds that within a handful of random sheets
-and prints the sheet it found it on.
+First, it changes the caller's list, which the edge tier checks. Second, on
+`["", "", "ada"]` it removes the first blank and the loop moves on to position
+1. The blank that moved into position 0 is never looked at, so the result is
+`["", "ada"]`. The stress tier finds this and prints the sheet that failed.
 
 **The plain loop, for comparison:**
 
@@ -154,7 +146,8 @@ def tidy_names(names):
     return tidy
 ```
 
-Identical behaviour, identical cost, five lines instead of one. Neither is
-wrong. The comprehension wins when the rule fits on a line you can read aloud,
-and this one does: keep the trimmed name, for each name, if anything is left.
+It behaves the same and costs the same, in five lines instead of one. A
+comprehension is the better choice when the rule fits on one line you can read
+aloud. This one does: keep the trimmed name, for each name, if anything is
+left.
 :::

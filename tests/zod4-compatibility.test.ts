@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { annotationBundleSchema } from '../src/annotations/annotation-bundle'
+import {
+  annotationBundleSchema,
+  legacyAnnotationBundleSchema,
+} from '../src/annotations/annotation-bundle'
 import { publicationInlineRunSchema } from '../src/publication/schema'
 import { principalSchema } from '../src/worker/principal'
 import {
@@ -46,7 +49,10 @@ function normalize(value: unknown): unknown {
     return Object.fromEntries(
       Object.keys(value)
         .sort()
-        .map((key) => [key, normalize((value as Record<string, unknown>)[key])]),
+        .map((key) => [
+          key,
+          normalize((value as Record<string, unknown>)[key]),
+        ]),
     )
   }
   return value
@@ -58,9 +64,7 @@ describe('Zod 4 compatibility', () => {
       '1a25bcdb7a033fed5bc384053f292b691d4128499dfced830679f0e281d4713f',
     )
     expect(baseline.vectors).toHaveLength(89)
-    expect(baseline.sourceHead).toBe(
-      'eda74c7f5605b5c190789092ef3d6fbcc174755f',
-    )
+    expect(baseline.sourceHead).toBe('eda74c7f5605b5c190789092ef3d6fbcc174755f')
     expect(baseline.zodVersion).toBe('3.25.76')
 
     for (const vector of baseline.vectors) {
@@ -158,9 +162,7 @@ describe('Zod 4 compatibility', () => {
   })
 
   it('keeps required fields required when present with undefined', () => {
-    expect(
-      loginStateSchema.safeParse({ state: 'opaque' }).success,
-    ).toBe(false)
+    expect(loginStateSchema.safeParse({ state: 'opaque' }).success).toBe(false)
     expect(
       loginStateSchema.safeParse({ state: 'opaque', returnTo: undefined })
         .success,
@@ -177,27 +179,26 @@ describe('Zod 4 compatibility', () => {
     ).toBe(false)
   })
 
-  it('preserves present-undefined optional fields in legacy annotations', () => {
+  it('rejects a foreign authority key even when explicitly undefined', () => {
     const omitted = {
       version: '1.0.0',
       graphId: 'legacy-graph',
       anchors: [],
       annotations: [],
     }
-    const omittedResult = annotationBundleSchema.safeParse(omitted)
-    const presentResult = annotationBundleSchema.safeParse({
-      ...omitted,
-      sourceId: undefined,
-    })
-
-    expect(omittedResult.success).toBe(true)
-    expect(presentResult.success).toBe(true)
-    if (omittedResult.success && presentResult.success) {
-      expect(normalize(omittedResult.data)).toEqual(omitted)
-      expect(normalize(presentResult.data)).toEqual({
+    for (const schema of [
+      legacyAnnotationBundleSchema,
+      annotationBundleSchema,
+    ]) {
+      expect(normalize(schema.parse(omitted))).toEqual(omitted)
+      const presentResult = schema.safeParse({
         ...omitted,
-        sourceId: { $undefined: true },
+        sourceId: undefined,
       })
+      expect(presentResult.success).toBe(false)
+      expect(
+        presentResult.error?.issues.map((issue) => issue.path),
+      ).toContainEqual(['sourceId'])
     }
   })
 

@@ -56,85 +56,116 @@ const LEGACY_ANCHOR_SOURCE: unique symbol = Symbol(
   'legacy-annotation-anchor-source',
 )
 
-export const annotationBundleSchema = z
+const annotationAnchorEntriesSchema = z
+  .array(
+    z
+      .object({
+        id: z.string().min(1).max(256),
+        anchor: semanticTextAnchorSchema,
+      })
+      .strict(),
+  )
+  .max(100_000)
+const annotationEntriesSchema = z.array(textAnnotationSchema).max(100_000)
+
+function validateUniqueAnnotationIds(
+  bundle: {
+    anchors: z.infer<typeof annotationAnchorEntriesSchema>
+    annotations: z.infer<typeof annotationEntriesSchema>
+  },
+  context: z.RefinementCtx,
+) {
+  const anchorIds = new Set<string>()
+  bundle.anchors.forEach((entry, index) => {
+    if (anchorIds.has(entry.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['anchors', index, 'id'],
+        message: `Duplicate anchor id: ${entry.id}`,
+      })
+    }
+    anchorIds.add(entry.id)
+  })
+  const annotationIds = new Set<string>()
+  bundle.annotations.forEach((annotation, index) => {
+    if (annotationIds.has(annotation.id)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['annotations', index, 'id'],
+        message: `Duplicate annotation id: ${annotation.id}`,
+      })
+    }
+    annotationIds.add(annotation.id)
+  })
+}
+
+/** The actual read-only legacy branch of the public bundle reader. */
+export const legacyAnnotationBundleSchema = z
   .object({
     version: z.enum([
       LEGACY_ANNOTATION_BUNDLE_VERSION,
       LEGACY_GRAPH_ANNOTATION_BUNDLE_VERSION,
-      ANNOTATION_BUNDLE_VERSION,
     ]),
-    sourceId: z.string().min(1).max(256).optional(),
-    graphId: z.string().min(1).max(256).optional(),
-    anchors: z
-      .array(
-        z
-          .object({
-            id: z.string().min(1).max(256),
-            anchor: semanticTextAnchorSchema,
-          })
-          .strict(),
-      )
-      .max(100_000),
-    annotations: z.array(textAnnotationSchema).max(100_000),
+    graphId: z
+      .string({ error: 'A legacy annotation bundle requires its graphId' })
+      .min(1)
+      .max(256),
+    sourceId: z
+      .never({ error: 'A legacy annotation bundle must not carry a sourceId' })
+      .optional(),
+    anchors: annotationAnchorEntriesSchema,
+    annotations: annotationEntriesSchema,
   })
   .strict()
   .superRefine((bundle, context) => {
-    if (bundle.version === ANNOTATION_BUNDLE_VERSION) {
-      if (bundle.sourceId === undefined) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['sourceId'],
-          message:
-            'A 1.2.0 annotation bundle requires its sourceId: the Struct source is the anchor authority',
-        })
-      }
-      if (bundle.graphId !== undefined) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['graphId'],
-          message:
-            'A 1.2.0 annotation bundle must not carry a graphId: the graph is no longer the anchor authority',
-        })
-      }
-    } else {
-      if (bundle.graphId === undefined) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['graphId'],
-          message: `A ${bundle.version} annotation bundle requires its graphId`,
-        })
-      }
-      if (bundle.sourceId !== undefined) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['sourceId'],
-          message: `A ${bundle.version} annotation bundle must not carry a sourceId`,
-        })
-      }
+    // optional never preserves useful field types/diagnostics, but must not
+    // turn an explicitly present undefined authority key into an absent key.
+    if (Object.hasOwn(bundle, 'sourceId')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['sourceId'],
+        message: `A ${bundle.version} annotation bundle must not carry a sourceId`,
+      })
     }
-    const anchorIds = new Set<string>()
-    bundle.anchors.forEach((entry, index) => {
-      if (anchorIds.has(entry.id)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['anchors', index, 'id'],
-          message: `Duplicate anchor id: ${entry.id}`,
-        })
-      }
-      anchorIds.add(entry.id)
-    })
-    const annotationIds = new Set<string>()
-    bundle.annotations.forEach((annotation, index) => {
-      if (annotationIds.has(annotation.id)) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['annotations', index, 'id'],
-          message: `Duplicate annotation id: ${annotation.id}`,
-        })
-      }
-      annotationIds.add(annotation.id)
-    })
+    validateUniqueAnnotationIds(bundle, context)
   })
+
+export const sourceAnnotationBundleSchema = z
+  .object({
+    version: z.literal(ANNOTATION_BUNDLE_VERSION),
+    sourceId: z
+      .string({
+        error:
+          'A 1.2.0 annotation bundle requires its sourceId: the Struct source is the anchor authority',
+      })
+      .min(1)
+      .max(256),
+    graphId: z
+      .never({
+        error:
+          'A 1.2.0 annotation bundle must not carry a graphId: the graph is no longer the anchor authority',
+      })
+      .optional(),
+    anchors: annotationAnchorEntriesSchema,
+    annotations: annotationEntriesSchema,
+  })
+  .strict()
+  .superRefine((bundle, context) => {
+    if (Object.hasOwn(bundle, 'graphId')) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['graphId'],
+        message:
+          'A 1.2.0 annotation bundle must not carry a graphId: the graph is no longer the anchor authority',
+      })
+    }
+    validateUniqueAnnotationIds(bundle, context)
+  })
+
+export const annotationBundleSchema = z.discriminatedUnion('version', [
+  legacyAnnotationBundleSchema,
+  sourceAnnotationBundleSchema,
+])
 
 export type AnnotationBundle = z.infer<typeof annotationBundleSchema>
 

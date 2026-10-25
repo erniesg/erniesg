@@ -1,72 +1,31 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  lstatSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
- * The inactivity evidence.
+ * Independent inactivity claims: actual transitive Worker/route imports,
+ * current source identity, and the original nonempty E05-only history.
  *
- * Two independent claims, and neither of them is "the code looks inactive":
- *
- * 1. **The import graph.** Nothing the Worker serves and nothing the site
- *    serves reaches `src/editorial/**`. It is computed with the TypeScript
- *    compiler's own resolver over the project's real `paths` mapping, from
- *    the Worker entry and from every route, so an alias, a re-export and a
- *    dynamic import are all followed.
- * 2. **The bytes.** The production writer and the public route are
- *    byte-identical to the commit the editorial contract was written on top
- *    of, and the only files the editorial lane changed are the editorial
- *    modules and the design record.
- *
- * ## The anchors
- *
- * The proof runs on a branch that carries **two** lanes, so it measures two
- * deltas and states where each of them starts and ends.
- *
- * - `E03_BASE` is the state before either lane: the merge base of the E-04
- *   and E-05 lanes. Every comparison starts here.
- * - `E04_HEAD` is the E-04 anchor. It is where the E-04 allowance comes
- *   from: the non-editorial differences from `E03_BASE` that E-04 owns are
- *   allowed to be there, and only those.
- * - `E05_LANE_HEAD` is the reviewed head of the E-05 lane itself
- *   (`feat/struct-e05-editorial-records-20261020`): the content the editorial
- *   contract was delivered as.
- * - `E05_CONTENT_HEAD` is the commit that integrated that content onto the
- *   E-04 base.
- * - `E05_HEAD` is the reviewed head of **this** delivery: the commit that
- *   carries the whole E-05 delta, the lane's content plus the acceptance
- *   work that follows it. It cannot be the tip of the branch, because this
- *   commit is the one that pins it and a commit cannot contain its own
- *   SHA.
- *
- * `PUBLIC_SITE_HEAD` pins the existing public site integrated after those
- * lanes. Route byte-identity uses that anchor; the E-05-only delta and writer
- * checks retain their original anchors.
- *
- * ## The E-04 allowance
- *
- * The proof does not assert that the branch changed nothing but the editorial
- * modules: the branch carries E-04's content too, and E-04's content is
- * real. What it asserts is that the non-editorial differences from the base
- * are **exactly** E-04's own delta plus this branch's own post-E-04
- * maintenance commits, and that **E-05's own delta contains nothing outside
- * the editorial scope**. The second assertion is the one that keeps E-05
- * honest, and it is measured from anchors that do not move when the E-04
- * anchor is advanced.
- *
- * ## PROVISIONAL: the E-04 anchor
- *
- * `E04_HEAD` below is the **E-04 integrated head**, not the commit E-04 will
- * land as. It is a real commit that carries E-04's content and that is an
- * ancestor of this branch, so the proof runs and is verifiable today.
- *
- * **It is PROVISIONAL and it must be advanced**: when PR #455 merges, the
- * E-04 squash commit that lands on `main` becomes the real anchor, and this
- * constant must be re-pinned to that SHA before the inactivity proof is
- * treated as final. Until that happens, the proof is evidence about the
- * integrated head, not about the shipped E-04.
+ * The historical anchors below never turn into current-tip allowances.
+ * Current source is reconstructed from the validated public/demo base plus
+ * the fixed verified Struct delta, six exact byte overrides and a static
+ * five-file repair-source receipt. That receipt is source custody, NOT
+ * semantic acceptance or independent approval of an author updating both
+ * source and receipt. Functional/negative gates and exact-head review remain
+ * mandatory. No old publisher ancestry or broad editorial exemption is used.
  */
 const E03_BASE = '9003ea7657ef73cbad271e6a82eab5f27f649e91'
 const E04_HEAD = '0e6a8bd2ac1a22a580e96ed58346093cd423ccd8'
@@ -74,6 +33,25 @@ const E05_LANE_HEAD = '25570506b6020add5ed2610e62dfb8abacdf308f'
 const E05_CONTENT_HEAD = '6040e9ebde12cf3b494d51feb8ac0def09902bdb'
 const E05_HEAD = 'be195eddeb0abca11e127c67f812c6aaf3b267cc'
 const PUBLIC_SITE_HEAD = '840540f2139e95cbe54b8270e191f3adb4f3cb38'
+const VALIDATED_BASE = 'e7080488dc481fc046c8b05921c855853c139a32'
+const INTEGRATION_BASE = 'ddbec7e07bbcad8816c89df644ba2dcc076cbf8b'
+const STRUCT_SOURCE = '974735c66a46ecc8a3f2d4128da1893438bc25bf'
+const REPAIR_RECEIPT = 'tests/fixtures/struct-restack-repair-source.json'
+const REPAIR_PATHS = [
+  'src/annotations/annotation-bundle.test.ts',
+  'src/annotations/annotation-bundle.ts',
+  'src/editorial/inactivity.test.ts',
+  'tests/zod4-compatibility.test.ts',
+  'tests/zod4-main-compatibility.test.ts',
+]
+const STATUS_DOCS = [
+  'docs/struct-migration-status.md',
+  'docs/struct-publication-graph-authority-inventory.md',
+  'docs/struct-research-paper-caller-inventory.md',
+  'docs/superpowers/plans/2026-10-20-struct-full-cutover-sequence.md',
+]
+const STATUS_BANNER =
+  '> Restack checkpoint (2026-10-25): this is unpublished candidate source ported from verified `974735c6` onto validated demo-only main base `e7080488`. Historical completion/evidence below is NOT a new main merge, live activation or acceptance of this restack. Main-side E02 records remain in the base history (`ec97271b`); dated E03/E04 records are retained. New exact-head validation/review is pending.\n\n'
 
 /**
  * The generated lockfile of the pnpm store, which `pnpm import` writes next
@@ -236,19 +214,238 @@ function isEditorialScope(path: string): boolean {
   )
 }
 
-// E-04 is merged into this branch when its reviewed head is an ancestor of
-// HEAD; the E-05 delta is always measured from anchors that do not move when
-// the E-04 anchor is advanced.
-const e04Merged = isAncestor(E04_HEAD)
-const e04Delta = changedPaths(E03_BASE, E04_HEAD)
+// Missing history must fail, never masquerade as an empty delta or an
+// ancestry exclusion. E04 remains historical evidence, not a HEAD allowance.
+for (const anchor of [
+  E03_BASE,
+  E04_HEAD,
+  E05_LANE_HEAD,
+  E05_CONTENT_HEAD,
+  E05_HEAD,
+  PUBLIC_SITE_HEAD,
+  VALIDATED_BASE,
+  INTEGRATION_BASE,
+  STRUCT_SOURCE,
+]) {
+  execFileSync('git', ['cat-file', '-e', `${anchor}^{commit}`])
+}
 const e05LaneDelta = changedPaths(E03_BASE, E05_LANE_HEAD)
 const e05DeliveryDelta = changedPaths(E05_CONTENT_HEAD, E05_HEAD)
 const e05Delta = new Set([...e05LaneDelta, ...e05DeliveryDelta])
 
-/** The revision a path's byte-identity expectation comes from. */
-function expectedRevision(path: string): string {
-  return e04Merged && e04Delta.has(path) ? E04_HEAD : E03_BASE
+type SourceEntry = { mode: string; blob: string }
+type SourceTree = Map<string, SourceEntry>
+
+function blobOf(bytes: Buffer | string): string {
+  const data = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes)
+  return createHash('sha1')
+    .update(`blob ${data.length}\0`)
+    .update(data)
+    .digest('hex')
 }
+
+function treeAt(revision: string): SourceTree {
+  const tree: SourceTree = new Map()
+  const rows = execFileSync('git', ['ls-tree', '-rz', '--full-tree', revision])
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)
+  for (const row of rows) {
+    const tab = row.indexOf('\t')
+    const [mode, kind, blob] = row.slice(0, tab).split(' ')
+    const path = row.slice(tab + 1)
+    if (
+      tab < 0 ||
+      !path ||
+      tree.has(path) ||
+      kind !== 'blob' ||
+      !['100644', '100755'].includes(mode!) ||
+      !/^[a-f0-9]{40}$/.test(blob!)
+    ) {
+      throw new Error(`Unsupported source entry: ${row}`)
+    }
+    tree.set(path, { mode: mode!, blob: blob! })
+  }
+  return tree
+}
+
+function replaceOnce(text: string, before: string, after: string): string {
+  if (text.split(before).length !== 2)
+    throw new Error('Source override must match exactly once')
+  return text.replace(before, after)
+}
+
+/** Expected bytes come only from immutable inputs, never candidate HEAD. */
+function baselineTree(): SourceTree {
+  const base = treeAt(VALIDATED_BASE)
+  const source = treeAt(STRUCT_SOURCE)
+  const expected = new Map(base)
+  const delta = gitLines([
+    'diff',
+    '--no-renames',
+    '--name-only',
+    INTEGRATION_BASE,
+    STRUCT_SOURCE,
+  ])
+  if (delta.length !== 173) throw new Error('Verified Struct delta changed')
+  for (const path of delta) {
+    const entry = source.get(path)
+    if (entry) expected.set(path, entry)
+    else expected.delete(path)
+  }
+  for (const path of STATUS_DOCS) {
+    expected.set(path, {
+      mode: '100644',
+      blob: blobOf(
+        Buffer.concat([
+          Buffer.from(STATUS_BANNER),
+          fileAt(STRUCT_SOURCE, path),
+        ]),
+      ),
+    })
+  }
+  const oldSpec =
+    'file:vendor/struct/erniesg-struct-0.0.0-90f76f1f80b037cc065169d07b13779c03420026.tgz'
+  const newSpec =
+    'file:vendor/struct/erniesg-struct-0.0.0-3d3a7c95b1c55a9ff4b527eee5acf36c168cd896.tgz'
+  const oldIntegrity =
+    'sha512-0WyBLp2PDZr4pOFYhfe6a1IbuZOuBemiR/alDgx73j8JYKZh7m8UthMsimjXp6wt3gUUiNumvXmykYeccnDUBQ=='
+  const newIntegrity =
+    'sha512-1wpcnARYQmVSsxiLRiSEtp5hd8h9WvxH22cSN/XwCrx0NWPxFif8mswYvF40PybKzi//e1sCPKuap4UiY+deaQ=='
+  for (const path of ['package.json', 'package-lock.json']) {
+    let bytes = replaceOnce(
+      fileAt(VALIDATED_BASE, path).toString('utf8'),
+      `"@erniesg/struct": "${oldSpec}"`,
+      `"@erniesg/struct": "${newSpec}"`,
+    )
+    if (path === 'package-lock.json') {
+      bytes = replaceOnce(
+        bytes,
+        `"resolved": "${oldSpec}",\n      "integrity": "${oldIntegrity}"`,
+        `"resolved": "${newSpec}",\n      "integrity": "${newIntegrity}"`,
+      )
+    }
+    expected.set(path, { mode: '100644', blob: blobOf(bytes) })
+  }
+  if (expected.size !== 1862)
+    throw new Error('Incomplete immutable source composition')
+  return expected
+}
+
+function exactObject(value: unknown, keys: string[]): Record<string, unknown> {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join('\0') !== [...keys].sort().join('\0')
+  ) {
+    throw new Error('Invalid repair source receipt keys')
+  }
+  return value as Record<string, unknown>
+}
+
+/** Source identity only: actual diffs still require independent review. */
+function repairEntries(text: string): SourceTree {
+  const receipt = exactObject(JSON.parse(text), [
+    'formatVersion',
+    'validatedBase',
+    'legacyIntegrationBase',
+    'verifiedStructSource',
+    'sourceChanges',
+  ])
+  if (
+    receipt.formatVersion !== 1 ||
+    receipt.validatedBase !== VALIDATED_BASE ||
+    receipt.legacyIntegrationBase !== INTEGRATION_BASE ||
+    receipt.verifiedStructSource !== STRUCT_SOURCE
+  ) {
+    throw new Error('Invalid repair source receipt origins')
+  }
+  const changes = exactObject(receipt.sourceChanges, REPAIR_PATHS)
+  const entries: SourceTree = new Map()
+  for (const path of REPAIR_PATHS) {
+    const entry = exactObject(changes[path], ['mode', 'gitBlob'])
+    if (
+      entry.mode !== '100644' ||
+      typeof entry.gitBlob !== 'string' ||
+      !/^[a-f0-9]{40}$/.test(entry.gitBlob)
+    ) {
+      throw new Error('Invalid repair source entry')
+    }
+    entries.set(path, { mode: entry.mode, blob: entry.gitBlob })
+  }
+  const canonical = {
+    formatVersion: 1,
+    validatedBase: VALIDATED_BASE,
+    legacyIntegrationBase: INTEGRATION_BASE,
+    verifiedStructSource: STRUCT_SOURCE,
+    sourceChanges: Object.fromEntries(
+      [...entries].map(([path, entry]) => [
+        path,
+        { mode: entry.mode, gitBlob: entry.blob },
+      ]),
+    ),
+  }
+  if (text !== `${JSON.stringify(canonical, null, 2)}\n`)
+    throw new Error('Noncanonical repair source receipt')
+  return entries
+}
+
+function expectedCandidate(text: string): SourceTree {
+  const expected = baselineTree()
+  for (const [path, entry] of repairEntries(text)) {
+    if (!expected.has(path))
+      throw new Error('Repair path missing from immutable composition')
+    expected.set(path, entry)
+  }
+  expected.set(REPAIR_RECEIPT, { mode: '100644', blob: blobOf(text) })
+  return expected
+}
+
+function assertSourceTree(expected: SourceTree, actual: SourceTree): void {
+  const paths = new Set([...expected.keys(), ...actual.keys()])
+  const different = [...paths].filter((path) => {
+    const a = expected.get(path)
+    const b = actual.get(path)
+    return !a || !b || a.mode !== b.mode || a.blob !== b.blob
+  })
+  if (different.length)
+    throw new Error(`Source composition mismatch: ${different.join(', ')}`)
+}
+
+function workingTree(): SourceTree {
+  const actual: SourceTree = new Map()
+  for (const path of execFileSync('git', ['ls-files', '-z'])
+    .toString('utf8')
+    .split('\0')
+    .filter(Boolean)) {
+    const absolute = resolve(PROJECT_ROOT, path)
+    const stat = lstatSync(absolute)
+    if (!stat.isFile() || actual.has(path))
+      throw new Error(`Unsupported working source: ${path}`)
+    actual.set(path, {
+      mode: stat.mode & 0o111 ? '100755' : '100644',
+      blob: blobOf(readFileSync(absolute)),
+    })
+  }
+  return actual
+}
+
+function assertNoUntracked(paths: string[]): void {
+  if (paths.length)
+    throw new Error(`Unexpected untracked source: ${paths.join(', ')}`)
+}
+
+function subset(tree: SourceTree, paths: string[]): SourceTree {
+  const selected: SourceTree = new Map()
+  for (const path of paths) {
+    const entry = tree.get(path)
+    if (entry) selected.set(path, entry)
+  }
+  return selected
+}
+
+const immutableBaseline = baselineTree()
 
 /**
  * The one file outside the editorial scope that E-05's own delta changed.
@@ -292,83 +489,254 @@ describe('the inactivity evidence', () => {
     expect(relativePaths(offenders)).toEqual([])
   })
 
-  it('keeps the production writer byte-identical to the commit it came from', () => {
-    const productionWriter = [
+  it('keeps both production writers byte-identical to verified Struct source', () => {
+    for (const path of [
       'tools/publication-build.mjs',
       'src/publication/renderers/vivliostyle.ts',
-    ]
-    for (const path of productionWriter) {
-      const atBase = fileAt(expectedRevision(path), path)
-      const inTree = readFileSync(resolve(PROJECT_ROOT, path))
-      expect(Buffer.compare(atBase, inTree)).toBe(0)
-      // E-05 itself never touched the production writer, even where E-04
-      // also changed it: the E-05-only claim is proven from E-05's own delta.
+    ]) {
+      expect(
+        Buffer.compare(
+          fileAt(STRUCT_SOURCE, path),
+          readFileSync(resolve(PROJECT_ROOT, path)),
+        ),
+      ).toBe(0)
       expect(e05Delta.has(path)).toBe(false)
     }
   })
 
-  it('keeps the public routes byte-identical to the existing site baseline', () => {
-    expect(isAncestor(PUBLIC_SITE_HEAD)).toBe(true)
-    const routes = filesUnder(PAGES_DIRECTORY).filter((file) =>
-      /\.(astro|ts|tsx|js|mjs)$/.test(file),
-    )
-    expect(routes.length).toBeGreaterThan(0)
-    for (const file of routes) {
-      const path = relative(PROJECT_ROOT, file).split(sep).join('/')
-      const atBase = fileAt(PUBLIC_SITE_HEAD, path)
-      expect(Buffer.compare(atBase, readFileSync(file))).toBe(0)
-      expect(e05Delta.has(path)).toBe(false)
-    }
+  it('keeps the complete public route set and bytes on the validated demo base', () => {
+    expect(isAncestor(VALIDATED_BASE)).toBe(true)
+    expect(isAncestor(PUBLIC_SITE_HEAD)).toBe(false)
+    const base = treeAt(VALIDATED_BASE)
+    const paths = [...base.keys()]
+      .filter((path) => path.startsWith('src/pages/'))
+      .sort()
+    expect(paths.length).toBeGreaterThan(0)
+    expect(relativePaths(filesUnder(PAGES_DIRECTORY)).sort()).toEqual(paths)
+    assertSourceTree(subset(base, paths), subset(workingTree(), paths))
+    for (const path of paths) expect(e05Delta.has(path)).toBe(false)
   })
 
-  it('changes nothing but the editorial modules, the design record and the E-04 allowance', () => {
-    const changed = gitLines(['diff', '--name-only', E03_BASE])
-    // The generated pnpm lockfile is not a difference the editorial contract
-    // can own: it is written by `pnpm import` and it is never delivered. It
-    // is excluded here explicitly, and the assertion below proves that it is
-    // not tracked and that it is ignored.
-    const untracked = gitLines([
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-    ]).filter((path) => path !== GENERATED_PNPM_LOCK)
-    const touched = [...new Set([...changed, ...untracked])]
-    expect(touched.length).toBeGreaterThan(0)
-    // The allowance above is computed from the **committed** range
-    // `E04_HEAD..HEAD`, so a delivery that is only in the working tree is
-    // observed here but not expected there. A non-editorial path that is
-    // modified but not committed is refused outright, so that the proof
-    // tolerates the delivery content only when it is committed on the branch
-    // after the E-04 anchor.
-    const uncommitted = gitLines(['diff', '--name-only', 'HEAD']).filter(
-      (path) => !isEditorialScope(path),
+  it('checks the full source composition and fixed repair identities, not path allowances', () => {
+    const receipt = readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8')
+    const expected = expectedCandidate(receipt)
+    expect(expected.size).toBe(1863)
+    assertSourceTree(expected, treeAt('HEAD'))
+    assertSourceTree(expected, workingTree())
+    assertNoUntracked(gitLines(['ls-files', '--others', '--exclude-standard']))
+    expect(
+      gitLines(['diff', '--name-only', VALIDATED_BASE]).length,
+    ).toBeGreaterThan(0)
+    // The production edit may not alter the writer, rollback or serializer.
+    const original = fileAt(
+      STRUCT_SOURCE,
+      'src/annotations/annotation-bundle.ts',
+    ).toString('utf8')
+    const current = readFileSync(
+      resolve(PROJECT_ROOT, 'src/annotations/annotation-bundle.ts'),
+      'utf8',
     )
-    expect(uncommitted).toEqual([])
-    const outside = touched.filter((path) => !isEditorialScope(path))
-    // The only non-editorial differences from the base are E-04's own delta
-    // and the branch's own post-E-04 maintenance commits, and only when
-    // E-04 is merged; otherwise the set is empty.
-    const branchMaintenance = e04Merged
-      ? gitLines(['diff', '--name-only', `${E04_HEAD}..HEAD`]).filter(
-          (path) => !isEditorialScope(path),
-        )
-      : []
-    const expectedOutside = e04Merged
-      ? [
-          ...new Set([
-            ...[...e04Delta].filter((path) => !isEditorialScope(path)),
-            ...branchMaintenance,
-          ]),
-        ].sort()
-      : []
-    expect(outside.sort()).toEqual(expectedOutside)
-    // E-05's own delta contains nothing outside the editorial modules, the
-    // editorial migrations and its design record, so E-05 touched nothing
-    // else even where E-04 also changed the same file.
+    expect(
+      current.startsWith(
+        original.slice(
+          0,
+          original.indexOf('export const annotationBundleSchema'),
+        ),
+      ),
+    ).toBe(true)
+    const suffix = '\nfunction isLegacyAnchorSource'
+    expect(current.slice(current.indexOf(suffix))).toBe(
+      original.slice(original.indexOf(suffix)),
+    )
+  })
+
+  it('retains the independent historical E05-only scope, not a current editorial exemption', () => {
     const e05Outside = [...e05Delta]
       .filter((path) => !isEditorialScope(path))
       .sort()
     expect(e05Outside).toEqual(E05_NON_EDITORIAL_EXCEPTIONS)
+  })
+
+  it('rejects modified, deleted, renamed and mode-changed source inside and outside named paths', () => {
+    const expected = expectedCandidate(
+      readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8'),
+    )
+    const paths = [
+      '.agent/audit.json',
+      'src/editorial/records.ts',
+      'migrations/editorial/0001_editorial_store.sql',
+      'migrations/editorial/0002_editorial_control.sql',
+      'tools/publication-build.mjs',
+      'src/publication/renderers/vivliostyle.ts',
+      ...STATUS_DOCS,
+      'package.json',
+      'package-lock.json',
+      ...REPAIR_PATHS,
+      ...[...expected.keys()].filter((path) => path.startsWith('src/pages/')),
+    ]
+    for (const path of paths) {
+      const entry = expected.get(path)!
+      expect(entry).toBeDefined()
+      for (const mutation of [
+        'bytes',
+        'delete',
+        'rename',
+        'executable',
+        'symlink',
+        'gitlink',
+      ]) {
+        const actual = new Map(expected)
+        if (mutation === 'delete' || mutation === 'rename') {
+          actual.delete(path)
+          if (mutation === 'rename') actual.set(`${path}.renamed`, entry)
+        } else {
+          actual.set(path, {
+            ...entry,
+            ...(mutation === 'bytes'
+              ? { blob: '0'.repeat(40) }
+              : {
+                  mode:
+                    mutation === 'executable'
+                      ? '100755'
+                      : mutation === 'symlink'
+                        ? '120000'
+                        : '160000',
+                }),
+          })
+        }
+        expect(
+          () => assertSourceTree(expected, actual),
+          `${path}:${mutation}`,
+        ).toThrow(/Source composition/)
+      }
+    }
+    const added = new Map(expected)
+    added.set('src/pages/__unauthorized.astro', {
+      mode: '100644',
+      blob: '0'.repeat(40),
+    })
+    expect(() => assertSourceTree(expected, added)).toThrow(
+      /Source composition/,
+    )
+    expect(() => assertNoUntracked(['src/__unauthorized.ts'])).toThrow(
+      /Unexpected untracked/,
+    )
+    assertSourceTree(expected, new Map(expected))
+  })
+
+  it('rejects any extra package script, Zod pin or other lock-node change', () => {
+    const expected = expectedCandidate(
+      readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8'),
+    )
+    for (const kind of ['script', 'zod', 'lock']) {
+      const path = kind === 'lock' ? 'package-lock.json' : 'package.json'
+      const parsed = JSON.parse(
+        readFileSync(resolve(PROJECT_ROOT, path), 'utf8'),
+      )
+      if (kind === 'script')
+        parsed.scripts['content:publish'] = 'unauthorized-command'
+      else if (kind === 'zod') parsed.dependencies.zod = '4.6.5'
+      else parsed.packages['node_modules/zod'].version = '4.6.5'
+      const actual = new Map(expected)
+      actual.set(path, {
+        mode: '100644',
+        blob: blobOf(`${JSON.stringify(parsed, null, 2)}\n`),
+      })
+      expect(() => assertSourceTree(expected, actual)).toThrow(
+        /Source composition/,
+      )
+    }
+  })
+
+  it('fails closed on missing, malformed, expanded or noncanonical source receipts', () => {
+    const text = readFileSync(resolve(PROJECT_ROOT, REPAIR_RECEIPT), 'utf8')
+    const parsed = JSON.parse(text)
+    expect(repairEntries(text).size).toBe(5)
+    for (const invalid of ['', '{', `${text} `, JSON.stringify(parsed)]) {
+      expect(() => repairEntries(invalid)).toThrow()
+    }
+    for (const mutation of [
+      'origin',
+      'extra-key',
+      'extra-path',
+      'missing-path',
+      'mode',
+      'blob',
+      'entry-key',
+    ]) {
+      const candidate = JSON.parse(text)
+      if (mutation === 'origin') candidate.validatedBase = STRUCT_SOURCE
+      if (mutation === 'extra-key') candidate.approved = true
+      if (mutation === 'extra-path')
+        candidate.sourceChanges['src/editorial/records.ts'] =
+          candidate.sourceChanges[REPAIR_PATHS[0]!]
+      if (mutation === 'missing-path')
+        delete candidate.sourceChanges[REPAIR_PATHS[0]!]
+      if (mutation === 'mode')
+        candidate.sourceChanges[REPAIR_PATHS[0]!].mode = '100755'
+      if (mutation === 'blob')
+        candidate.sourceChanges[REPAIR_PATHS[0]!].gitBlob = 'not-a-git-blob'
+      if (mutation === 'entry-key')
+        candidate.sourceChanges[REPAIR_PATHS[0]!].ignored = true
+      expect(() =>
+        repairEntries(`${JSON.stringify(candidate, null, 2)}\n`),
+      ).toThrow()
+    }
+  })
+
+  it('uses the real resolver to detect direct, re-exported, aliased and dynamic editorial reachability', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'editorial-import-negative-'))
+    try {
+      const editorial = resolve(EDITORIAL_DIRECTORY, 'records.ts')
+      const bridge = join(directory, 'bridge.ts')
+      writeFileSync(bridge, `export * from ${JSON.stringify(editorial)}\n`)
+      const cases = [
+        `import ${JSON.stringify(editorial)}`,
+        `export * from './bridge'`,
+        `import * as editorialAlias from ${JSON.stringify(editorial)}`,
+        `const lazy = import('./bridge')`,
+        `---\nimport * as editorialAlias from ${JSON.stringify(editorial)}\n---\n<p>invented fixture</p>`,
+      ]
+      for (const [index, body] of cases.entries()) {
+        const root = join(
+          directory,
+          index === cases.length - 1 ? 'route.astro' : `root${index}.ts`,
+        )
+        writeFileSync(root, body)
+        expect(
+          [...reachableFrom([root])].some((file) =>
+            file.startsWith(`${EDITORIAL_DIRECTORY}${sep}`),
+          ),
+        ).toBe(true)
+      }
+      const clean = join(directory, 'clean.ts')
+      writeFileSync(clean, 'export const invented = true\n')
+      expect(
+        [...reachableFrom([clean])].some((file) =>
+          file.startsWith(`${EDITORIAL_DIRECTORY}${sep}`),
+        ),
+      ).toBe(false)
+      const phraseFile = join(directory, 'activation.ts')
+      writeFileSync(
+        phraseFile,
+        'export const phrase = "erniesg.editorial.activate.v1"\n',
+      )
+      expect(
+        filesUnder(directory).filter((file) =>
+          readFileSync(file, 'utf8').includes('erniesg.editorial.activate.v1'),
+        ),
+      ).toEqual([phraseFile])
+      const rootMigrations = readdirSync(resolve(PROJECT_ROOT, 'migrations'))
+        .filter((name) => name.endsWith('.sql'))
+        .sort()
+      const contaminated = [
+        ...rootMigrations,
+        '0006_editorial_store.sql',
+      ].sort()
+      expect(() => expect(contaminated).toEqual(rootMigrations)).toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('demonstrates that the E-05 delta is non-empty and in the editorial scope', () => {

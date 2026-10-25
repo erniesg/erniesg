@@ -8,6 +8,8 @@ import { buildStructDocument } from '../struct-adapters/from-reconstruction'
 import type { DocumentReconstruction } from '../research/import-types'
 import {
   annotationBundleSchema,
+  legacyAnnotationBundleSchema,
+  sourceAnnotationBundleSchema,
   createAnnotationBundle,
   createLegacyAnnotationAnchorMap,
   serializeAnnotationBundle,
@@ -152,6 +154,81 @@ it('accepts codepoint and document-scoped anchors against ordered text', () => {
 })
 
 describe('AnnotationBundle', () => {
+  it.each([
+    {
+      version: '1.0.0',
+      branch: legacyAnnotationBundleSchema,
+      owner: 'graphId',
+      foreign: 'sourceId',
+    },
+    {
+      version: '1.1.0',
+      branch: legacyAnnotationBundleSchema,
+      owner: 'graphId',
+      foreign: 'sourceId',
+    },
+    {
+      version: '1.2.0',
+      branch: sourceAnnotationBundleSchema,
+      owner: 'sourceId',
+      foreign: 'graphId',
+    },
+  ])(
+    'keeps $version authority, strictness, uniqueness and bounds in production',
+    ({ version, branch, owner, foreign }) => {
+      const fixture = structBundleFixture().bundle
+      const valid = {
+        version,
+        [owner]: 'invented-authority',
+        anchors: fixture.anchors,
+        annotations: fixture.annotations,
+      }
+      for (const schema of [branch, annotationBundleSchema]) {
+        expect(schema.parse(valid)).toEqual(valid)
+        for (const value of ['foreign-authority', undefined]) {
+          const result = schema.safeParse({ ...valid, [foreign]: value })
+          expect(result.success).toBe(false)
+          expect(
+            result.error?.issues.map((issue) => issue.path),
+          ).toContainEqual([foreign])
+        }
+        const missing = schema.safeParse({ ...valid, [owner]: undefined })
+        expect(missing.success).toBe(false)
+        expect(missing.error?.issues.map((issue) => issue.path)).toContainEqual(
+          [owner],
+        )
+        expect(schema.safeParse({ ...valid, unexpected: true }).success).toBe(
+          false,
+        )
+        expect(schema.safeParse({ ...valid, version: '2.0.0' }).success).toBe(
+          false,
+        )
+        for (const key of ['anchors', 'annotations'] as const) {
+          const duplicate = schema.safeParse({
+            ...valid,
+            [key]: [fixture[key][0], fixture[key][0]],
+          })
+          expect(duplicate.success).toBe(false)
+          expect(
+            duplicate.error?.issues.map((issue) => issue.path),
+          ).toContainEqual([key, 1, 'id'])
+          let visits = 0
+          const child = {
+            get id() {
+              visits += 1
+              return 'must-not-visit'
+            },
+          }
+          expect(
+            schema.safeParse({ ...valid, [key]: Array(100_001).fill(child) })
+              .success,
+          ).toBe(false)
+          expect(visits).toBe(0)
+        }
+      }
+    },
+  )
+
   it('reads a saved 1.0 bundle while writing new bundles as 1.2', () => {
     const saved = JSON.parse(
       '{"version":"1.0.0","graphId":"legacy-graph","anchors":[{"id":"note:target","anchor":{"nodeId":"n","position":{"start":0,"end":4},"quote":{"exact":"text","prefix":"","suffix":""}}}],"annotations":[{"id":"note","kind":"note","target":{"nodeId":"n","position":{"start":0,"end":4},"quote":{"exact":"text","prefix":"","suffix":""}},"body":"saved body","geometryCache":[]}]}',

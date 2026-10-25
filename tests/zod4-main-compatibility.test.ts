@@ -1,7 +1,11 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { annotationBundleSchema } from '../src/annotations/annotation-bundle'
+import {
+  annotationBundleSchema,
+  legacyAnnotationBundleSchema,
+  sourceAnnotationBundleSchema,
+} from '../src/annotations/annotation-bundle'
 import { publicationInlineRunSchema } from '../src/publication/schema'
 import { principalSchema } from '../src/worker/principal'
 import {
@@ -17,7 +21,8 @@ const schemas = {
   loginStateSchema,
   progressBodySchema,
   semanticTextAnchorSchema,
-  annotationBundleSchema,
+  // Main's captured annotation contract is the real production legacy branch.
+  annotationBundleSchema: legacyAnnotationBundleSchema,
   publicationInlineRunSchema,
 }
 const baselineBytes = readFileSync(
@@ -53,7 +58,7 @@ function normalize(value: unknown): unknown {
   return value
 }
 
-describe('main application Zod 4 compatibility', () => {
+describe('main-era production schema branches on Zod 4', () => {
   it('retains the actual pre-upgrade main corpus, not the later Struct formats', () => {
     expect(createHash('sha256').update(baselineBytes).digest('hex')).toBe(
       '614d6038bb03283a3d52c85cfb2caa9b67d0241ab74d771d0ddf2db7c46e7fe8',
@@ -113,31 +118,64 @@ describe('main application Zod 4 compatibility', () => {
     ).toBe(false)
   })
 
-  it('keeps main annotation graph authority and supported versions unchanged', () => {
-    for (const version of ['1.0.0', '1.1.0']) {
-      const bundle = {
-        version,
-        graphId: 'legacy-graph',
-        anchors: [],
-        annotations: [],
+  it('keeps legacy graph authority strict in both real production readers', () => {
+    for (const schema of [
+      legacyAnnotationBundleSchema,
+      annotationBundleSchema,
+    ]) {
+      for (const version of ['1.0.0', '1.1.0']) {
+        const bundle = {
+          version,
+          graphId: 'legacy-graph',
+          anchors: [],
+          annotations: [],
+        }
+        expect(schema.safeParse(bundle).success).toBe(true)
+        expect(
+          schema.safeParse({ ...bundle, graphId: undefined }).success,
+        ).toBe(false)
+        expect(
+          schema.safeParse({ ...bundle, sourceId: undefined }).success,
+        ).toBe(false)
       }
-      expect(annotationBundleSchema.safeParse(bundle).success).toBe(true)
-      expect(
-        annotationBundleSchema.safeParse({ ...bundle, graphId: undefined })
-          .success,
-      ).toBe(false)
-      expect(
-        annotationBundleSchema.safeParse({ ...bundle, sourceId: undefined })
-          .success,
-      ).toBe(false)
     }
     expect(
-      annotationBundleSchema.safeParse({
+      legacyAnnotationBundleSchema.safeParse({
         version: '1.2.0',
         sourceId: 'newer-struct-format',
         anchors: [],
         annotations: [],
       }).success,
     ).toBe(false)
+  })
+
+  it('connects the captured legacy branch to the actual combined reader', () => {
+    const annotations = baseline.vectors.filter(
+      (vector) => vector.schema === 'annotationBundleSchema',
+    )
+    const extension = annotations.filter(
+      (vector) => (vector.input as { version?: string }).version === '1.2.0',
+    )
+    expect(extension.map((vector) => vector.id)).toEqual([
+      'annotationBundleSchema-10',
+    ])
+    for (const vector of annotations) {
+      const legacy = legacyAnnotationBundleSchema.safeParse(vector.input)
+      const combined = annotationBundleSchema.safeParse(vector.input)
+      if (vector === extension[0]) {
+        expect(vector.expected.success).toBe(false)
+        expect(legacy.success).toBe(false)
+        expect(combined.success).toBe(true)
+        const source = sourceAnnotationBundleSchema.parse(vector.input)
+        if (combined.success) expect(combined.data).toEqual(source)
+      } else {
+        expect(combined.success, vector.id).toBe(legacy.success)
+        if (combined.success && legacy.success) {
+          expect(normalize(combined.data), vector.id).toEqual(
+            normalize(legacy.data),
+          )
+        }
+      }
+    }
   })
 })

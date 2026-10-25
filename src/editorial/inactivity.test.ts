@@ -217,7 +217,7 @@ function isEditorialScope(path: string): boolean {
 
 // Missing history must fail, never masquerade as an empty delta or an
 // ancestry exclusion. E04 remains historical evidence, not a HEAD allowance.
-for (const anchor of [
+const HISTORY_ANCHORS = [
   E03_BASE,
   E04_HEAD,
   E05_LANE_HEAD,
@@ -228,7 +228,8 @@ for (const anchor of [
   INTEGRATION_BASE,
   STRUCT_SOURCE,
   REVALIDATOR_REPAIR,
-]) {
+]
+for (const anchor of HISTORY_ANCHORS) {
   execFileSync('git', ['cat-file', '-e', `${anchor}^{commit}`])
 }
 const e05LaneDelta = changedPaths(E03_BASE, E05_LANE_HEAD)
@@ -612,7 +613,7 @@ describe('the inactivity evidence', () => {
     try {
       const head = gitLines(['rev-parse', 'HEAD'])[0]!
       git('init')
-      git('fetch', '--no-tags', PROJECT_ROOT, head, VALIDATED_BASE, REVALIDATOR_REPAIR)
+      git('fetch', '--no-tags', PROJECT_ROOT, head, VALIDATED_BASE, REVALIDATOR_REPAIR, STRUCT_SOURCE)
       git('checkout', '--detach', `${REVALIDATOR_REPAIR}^`)
       for (const [revision, name] of [
         [REVALIDATOR_REPAIR, 'prerequisite'],
@@ -630,6 +631,26 @@ describe('the inactivity evidence', () => {
       )
       assertSourceTree(expected, treeAt('HEAD', root))
       assertSourceTree(treeAt(head), treeAt('HEAD', root))
+      // GitHub auto-deletes merged PR branches. Keep proof objects in durable
+      // tags, then exercise a fresh clone with NO old PR branches to borrow.
+      for (const [name, revision] of [
+        ['validated-demo', VALIDATED_BASE],
+        ['verified-struct', STRUCT_SOURCE],
+        ['revalidator', REVALIDATOR_REPAIR],
+      ]) git('tag', `struct-restack-proof/${name}-${revision}`, revision!)
+      git('branch', 'projected-main', 'HEAD')
+      git('symbolic-ref', 'HEAD', 'refs/heads/projected-main')
+      const fresh = join(root, 'fresh-clone')
+      git('clone', '--no-local', '--no-checkout', '--branch', 'projected-main', root, fresh)
+      const freshGit = (...args: string[]): string => execFileSync(
+        'git', ['-C', fresh, ...args],
+        { env: environment, encoding: 'utf8', stdio: 'pipe' },
+      ).trim()
+      expect(freshGit('for-each-ref', '--format=%(refname)', 'refs/remotes/origin'))
+        .toBe('refs/remotes/origin/HEAD\nrefs/remotes/origin/projected-main')
+      for (const anchor of HISTORY_ANCHORS)
+        freshGit('cat-file', '-e', `${anchor}^{commit}`)
+      assertSourceTree(expected, treeAt('HEAD', fresh))
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

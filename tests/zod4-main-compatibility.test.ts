@@ -153,8 +153,11 @@ describe('main-era production schema branches on Zod 4', () => {
     const annotations = baseline.vectors.filter(
       (vector) => vector.schema === 'annotationBundleSchema',
     )
+    // Only the frozen valid source-authority case extends the old contract.
+    // The other 1.2 case has a graphId and must still reject in both readers.
     const extension = annotations.filter(
       (vector) =>
+        vector.id === 'annotationBundleSchema-10' &&
         (vector.input as { version?: string } | null)?.version === '1.2.0',
     )
     expect(extension.map((vector) => vector.id)).toEqual([

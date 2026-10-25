@@ -1,6 +1,4 @@
 import { expect, test, type Page } from '@playwright/test'
-import { existsSync } from 'node:fs'
-import path from 'node:path'
 import { installStaticRoutes } from './static-build'
 
 /**
@@ -20,19 +18,9 @@ const BOOK = '/books/build-a-coding-agent/'
 const CHAPTER = '/books/build-a-coding-agent/ch12-hash-maps/'
 const DIRECTORY = '/books/'
 const LIBRARY = '/library/'
-const PAPER = '/papers/semantic-responsive-typesetting/'
+const PAPER = '/research/semantic-responsive-typesetting/'
 const POST = '/blog/a-i-art-and-anti-discrimination'
 const OVERFLOW_EPSILON_CSS_PX = 1
-
-/**
- * The production release gate withholds `/papers` from the build it deploys,
- * so a static run against that build has no paper to open. Every other run
- * has one.
- */
-const PAPERS_WITHHELD = Boolean(
-  process.env.SRT_STATIC_BUILD_DIR &&
-    !existsSync(path.resolve(process.env.SRT_STATIC_BUILD_DIR, 'papers')),
-)
 
 async function visibleColumns(page: Page): Promise<string[]> {
   return page.$$eval('[data-reading-column]', (elements) =>
@@ -251,10 +239,6 @@ test.describe('the four reading surfaces of ADR 010', () => {
     test(`renders ${name} through the shell, with a margin mount`, async ({
       page,
     }) => {
-      test.skip(
-        route === PAPER && PAPERS_WITHHELD,
-        'The production release gate withholds /papers from this build.',
-      )
       await page.setViewportSize({ width: 1440, height: 1000 })
       await page.goto(route)
 
@@ -287,11 +271,8 @@ test.describe('the four reading surfaces of ADR 010', () => {
   })
 
   test('gives a paper its authored node ids as block ids', async ({ page }) => {
-    test.skip(
-      PAPERS_WITHHELD,
-      'The production release gate withholds /papers from this build.',
-    )
     await page.goto(PAPER)
+    await expect(page.locator('[data-reading-shell]')).toHaveAttribute('data-document-uri', 'https://ernie.sg/papers/semantic-responsive-typesetting/')
     const ids = await textBlockIds(page)
 
     expect(ids).toContain('p-proposition-1')

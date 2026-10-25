@@ -11,11 +11,11 @@ import {
   SUPPORTED_LOCALES,
   type SupportedLocale,
 } from '@/lib/i18n'
+import { detectPreferredLocale, getStaticText } from '@/lib/use-site-locale'
 import {
-  detectPreferredLocale,
-  getStaticText,
-  normalizeLocalePreference,
-} from '@/lib/use-site-locale'
+  localizedNavigationUrl,
+  resolveDocumentLocale,
+} from '@/lib/page-locales'
 import {
   LEGACY_BLOG_LOCALE_STORAGE_KEY,
   SITE_LOCALE_CHANGE_EVENT,
@@ -51,26 +51,61 @@ export function LanguageToggle() {
   const t = (key: string) => getStaticText(locale, key)
 
   React.useEffect(() => {
-    const storedLocale =
-      localStorage.getItem(SITE_LOCALE_STORAGE_KEY) ??
-      localStorage.getItem(LEGACY_BLOG_LOCALE_STORAGE_KEY)
-    const nextLocale = storedLocale
-      ? normalizeLocalePreference(storedLocale)
-      : detectPreferredLocale()
+    function syncDocumentLocale() {
+      let storedLocale: string | null = null
+      try {
+        storedLocale =
+          localStorage.getItem(SITE_LOCALE_STORAGE_KEY) ??
+          localStorage.getItem(LEGACY_BLOG_LOCALE_STORAGE_KEY)
+      } catch {
+        /* Native route language remains usable without storage. */
+      }
+      const documentLocale =
+        document
+          .querySelector('meta[name="site-document-locale"]')
+          ?.getAttribute('content') ?? document.documentElement.lang
+      const nextLocale = resolveDocumentLocale(
+        storedLocale,
+        documentLocale,
+        detectPreferredLocale(),
+      )
 
-    localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
-    setLocale(nextLocale)
-    dispatchLocaleChange(nextLocale)
+      setLocale(nextLocale)
+      dispatchLocaleChange(nextLocale)
+
+      // The Header persists through Astro navigation. Re-evaluate the map on
+      // every incoming document so its chrome cannot outrun localized prose.
+      const nextPath = getLocalizedPagePath(nextLocale)
+      if (nextPath) {
+        const destination = localizedNavigationUrl(
+          nextPath,
+          window.location.href,
+        )
+        if (destination !== window.location.href)
+          window.location.replace(destination)
+      }
+    }
+
+    syncDocumentLocale()
+    document.addEventListener('astro:page-load', syncDocumentLocale)
+    return () =>
+      document.removeEventListener('astro:page-load', syncDocumentLocale)
   }, [])
 
   function chooseLocale(nextLocale: SupportedLocale) {
-    localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
+    try {
+      localStorage.setItem(SITE_LOCALE_STORAGE_KEY, nextLocale)
+    } catch {
+      /* Preference storage is optional. */
+    }
     setLocale(nextLocale)
     dispatchLocaleChange(nextLocale)
 
     const nextPath = getLocalizedPagePath(nextLocale)
-    if (nextPath && nextPath !== window.location.pathname) {
-      window.location.assign(nextPath)
+    if (nextPath) {
+      const destination = localizedNavigationUrl(nextPath, window.location.href)
+      if (destination !== window.location.href)
+        window.location.assign(destination)
     }
   }
 

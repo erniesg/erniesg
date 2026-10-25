@@ -1,0 +1,186 @@
+---
+import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Container from '@/components/Container.astro'
+import Layout from '@/layouts/Layout.astro'
+import { representingTasteProject } from '@/research/representing-taste'
+import { structProject } from '@/research/struct-project'
+---
+
+<Layout
+  title={representingTasteProject.title}
+  description={representingTasteProject.summary}
+  canonicalPath={representingTasteProject.path}
+>
+  <Container class="flex flex-col gap-y-10 pb-24">
+    <Breadcrumbs
+      items={[
+        { label: 'Research', href: '/research/', i18nKey: 'nav.research' },
+        { label: 'REPResenting Taste' },
+      ]}
+    />
+    <header class="flex flex-col gap-y-4">
+      <p class="text-sm text-muted-foreground">
+        {representingTasteProject.status}
+      </p>
+      <h1 class="max-w-4xl text-3xl font-bold">
+        {representingTasteProject.title}
+      </h1>
+      <p class="max-w-2xl leading-relaxed">
+        {representingTasteProject.summary}
+      </p>
+      <div class="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+        <a
+          class="font-semibold underline underline-offset-4"
+          href={structProject.demoPath}>Try the Struct demo →</a
+        >
+        <a
+          class="underline underline-offset-4"
+          href={representingTasteProject.sourcePlan}>Research plan</a
+        >
+      </div>
+    </header>
+
+    <div class="prose max-w-[70ch] dark:prose-invert">
+      <h2>Problem</h2>
+      <p>
+        Much of creative production is a grind of adaptation. Content changes.
+        Collaborators bring different versions. Work moves between formats and
+        audiences. Each change can mean repeating adjustments, reconstructing
+        earlier choices, and repairing their knock-on effects.
+      </p>
+      <p>
+        Workflows built around sequential edits make these operations cumbersome
+        and repetitive. The judgments behind the work remain difficult to
+        isolate, reuse or revise.
+      </p>
+
+      <h2>Approach</h2>
+      <p>
+        Develop software that represents content, creative decisions and their
+        dependencies as explicit, editable structures. A decision records what
+        it applies to, its scope, the conditions under which it remains valid,
+        and its relationships to other decisions. The model is extensible with
+        new decision types and operations.
+      </p>
+      <p>
+        <a href={structProject.demoPath}>Struct</a> supplies the document layer: structured
+        content, assets, relationships, and reading renditions. The decision layer
+        is application-owned and proposed; it does not make Struct responsible for
+        creative policy or revisions. It is not a universal Struct schema or a competing
+        canonical editorial store.
+      </p>
+      <figure>
+        <ol
+          class="not-prose m-0 grid list-none gap-3 p-0 text-sm md:grid-cols-4"
+          aria-label="Proposed REPResenting Taste software architecture"
+        >
+          <li class="border p-3">
+            <a
+              class="font-bold underline underline-offset-4"
+              href={structProject.demoPath}>Document</a
+            >
+            <span class="block text-muted-foreground">Content and assets</span>
+          </li>
+          <li class="border p-3">
+            <strong>Decisions</strong>
+            <span class="block text-muted-foreground"
+              >Scope and dependencies</span
+            >
+          </li>
+          <li class="border p-3">
+            <strong>Operations</strong>
+            <span class="block text-muted-foreground"
+              >Replay, edit, fork, remix</span
+            >
+          </li>
+          <li class="border p-3">
+            <strong>Renditions</strong>
+            <span class="block text-muted-foreground"
+              >Digital and offline editions</span
+            >
+          </li>
+        </ol>
+        <figcaption>
+          A bounded, application-owned source of truth for content, creative
+          decisions, and dependencies supports parallel branches and forms
+          derived for different contexts.
+        </figcaption>
+      </figure>
+      <p>
+        A typed API would apply operations with preconditions, validity checks,
+        and conflict diagnostics. People and agents can then share a state,
+        develop variants independently, combine accepted decisions, and check
+        what remains applicable after change.
+      </p>
+      <table>
+        <thead>
+          <tr>
+            <th>Capability</th>
+            <th>Software method</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Replay</td>
+            <td>Record operations against a known state and check validity.</td>
+          </tr>
+          <tr>
+            <td>Edit</td>
+            <td
+              >Inspect and change content, decisions, scope, and dependencies.</td
+            >
+          </tr>
+          <tr>
+            <td>Parallel</td>
+            <td
+              >Fork shared state for independent variants and contributions.</td
+            >
+          </tr>
+          <tr>
+            <td>Remix</td>
+            <td
+              >Compose selected decisions and expose interactions and conflicts.</td
+            >
+          </tr>
+        </tbody>
+      </table>
+      <h3>Proposed evaluation</h3>
+      <p>
+        Matched tasks will compare this workflow with a strong native workflow
+        using the same content briefs, model access, and renderer. The primary
+        measure is total active editing time: capture, composition, adaptation,
+        checking, and repair. The proposed initial target is at least 20% less
+        active work, with retained decisions, completion, and blind output
+        quality as secondary measures. A five-task pilot precedes a
+        counterbalanced editor study.
+      </p>
+
+      <h2>Why Now</h2>
+      <p>
+        Replay, branching, and remixing existed before large language models.
+        Autonomous creative work now needs explicit shared state, accepted
+        decisions, and dependencies so people and agents can inspect, combine,
+        and check changes. REPResenting Taste investigates those foundations.
+      </p>
+
+      <h2>Outcome</h2>
+      <p>
+        An AI-native magazine, as one application of the representation and its
+        operations, that can be created and revised collaboratively, then
+        published across digital and offline formats.
+      </p>
+      <h3>Milestones</h3>
+      <p>
+        <strong>Running:</strong> Struct’s <a href={structProject.demoPath}
+          >PDF-import and responsive-reading demo</a
+        >.
+      </p>
+      <p>
+        <strong>Planned:</strong> a shared canonical representation for content, creative
+        decisions, and dependencies across forms; a five-task pilot; a complete issue
+        with Margin; held-out editor and reader studies; then a REPResenting Taste
+        research-paper submission.
+      </p>
+    </div>
+  </Container>
+</Layout>

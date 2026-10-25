@@ -23,7 +23,7 @@
     "margin:build": "tsc -p packages/margin/tsconfig.build.json",
     "build": "npm run build:production",
     "build:astro": "astro check && astro build",
-    "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs && npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication && npm run publication:check -- --input .agent/evidence/publication --matrix phone-webpub,eink-epub,a5-pdf,a4-pdf",
+    "build:production": "PUBLIC_RESEARCH_RELEASE=production npm run build:astro && PUBLIC_RESEARCH_RELEASE=production node tools/deployment/apply-release-gate.mjs && node tools/translation/pages.mjs apply --dist dist --catalog .translation/pages.json && node tools/translation/pages-sitemap.mjs --dist dist --catalog .translation/pages.json && npm run publication:build -- --adapter astro --entry moving-to-cloudflare-with-astro --output .agent/evidence/publication && npm run publication:check -- --input .agent/evidence/publication --matrix phone-webpub,eink-epub,a5-pdf,a4-pdf",
     "build:staging": "PUBLIC_RESEARCH_RELEASE=staging npm run build:astro",
     "srt:export": "PUBLIC_RESEARCH_RELEASE=staging astro check && PUBLIC_RESEARCH_RELEASE=staging astro build --outDir .agent/evidence/srt-export",
     "srt:checkpoint-evidence": "playwright install chromium && node tools/srt-source-output-evidence.mjs",

@@ -1,0 +1,20 @@
+---
+import Container from '@/components/Container.astro'
+import Layout from '@/layouts/Layout.astro'
+---
+
+<Layout
+  title="Experiments"
+  description="There are no experiments published here yet."
+  noindex
+>
+  <Container class="flex flex-col gap-y-6 pb-24">
+    <header class="flex flex-col gap-y-3 border-b pb-6">
+      <h1 class="text-3xl font-bold">Experiments</h1>
+      <p class="max-w-2xl text-sm leading-relaxed text-muted-foreground">
+        There are no experiments published here yet.
+      </p>
+    </header>
+    <a class="underline underline-offset-4" href="/projects/">← Projects</a>
+  </Container>
+</Layout>

@@ -1044,8 +1044,8 @@ for (const outcome of ['success', 'failure'] as const) {
       const frame = document.querySelector<HTMLIFrameElement>(
         '[data-struct-preview-frame]',
       )!
-      // Removing src first navigates to about:blank; duplicate srcdoc writes
-      // can then leave that blank document committed despite the new label.
+      // Mutating src can navigate to about:blank even after srcdoc changes.
+      // Install the uploaded document once without touching the fallback URL.
       const observer = new MutationObserver((records) => {
         frame.dataset.previewNavigation = records
           .map((record) => record.attributeName)
@@ -1068,7 +1068,7 @@ for (const outcome of ['success', 'failure'] as const) {
     })
     await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
       'data-preview-navigation',
-      'srcdoc,src',
+      'srcdoc',
     )
     await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
     await expect(page.locator('[data-struct-upload-option]')).toHaveText(

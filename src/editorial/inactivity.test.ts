@@ -38,7 +38,7 @@ const VALIDATED_BASE = 'e7080488dc481fc046c8b05921c855853c139a32'
 const INTEGRATION_BASE = 'ddbec7e07bbcad8816c89df644ba2dcc076cbf8b'
 const STRUCT_SOURCE = '974735c66a46ecc8a3f2d4128da1893438bc25bf'
 const REVALIDATOR_REPAIR = 'bbc46aadbafa1714152fa6fecf37d0148244ea96'
-const DEMO_PREVIEW_REPAIR = 'e2ce16e7144e0523e14bfc18ca5d841edf3d1d8d'
+const DEMO_PREVIEW_REPAIR = 'bb371059a81d9d2e84106e28b9cb4096e88a66fd'
 const REPAIR_RECEIPT = 'tests/fixtures/struct-restack-repair-source.json'
 const REPAIR_PATHS = [
   'src/annotations/annotation-bundle.test.ts',

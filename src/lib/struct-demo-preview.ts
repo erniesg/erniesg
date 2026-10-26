@@ -139,10 +139,9 @@ export function initializeStructPreviews() {
         const revision = ++documentRevision
         if (select.value === '__upload__') {
           if (uploaded) {
-            // Install the document before removing the sample URL so no
-            // about:blank navigation races this single srcdoc update.
+            // srcdoc overrides the sample URL. Leave src alone: removing it
+            // can race this document with an unwanted about:blank navigation.
             frame.srcdoc = readerDocument(uploaded.html, settings)
-            frame.removeAttribute('src')
           }
           return
         }

@@ -22,7 +22,8 @@ import { describe, expect, it } from 'vitest'
  * The historical anchors below never turn into current-tip allowances.
  * Current source is reconstructed from the validated public/demo base plus
  * the fixed verified Struct delta, six exact byte overrides, the fixed
- * three-path revalidator repair and a static five-file repair-source receipt. That receipt is source custody, NOT
+ * three-path revalidator repair, two-path demo preview repair and a static
+ * five-file repair-source receipt. That receipt is source custody, NOT
  * semantic acceptance or independent approval of an author updating both
  * source and receipt. Functional/negative gates and exact-head review remain
  * mandatory. No old publisher ancestry or broad editorial exemption is used.
@@ -37,6 +38,7 @@ const VALIDATED_BASE = 'e7080488dc481fc046c8b05921c855853c139a32'
 const INTEGRATION_BASE = 'ddbec7e07bbcad8816c89df644ba2dcc076cbf8b'
 const STRUCT_SOURCE = '974735c66a46ecc8a3f2d4128da1893438bc25bf'
 const REVALIDATOR_REPAIR = 'bbc46aadbafa1714152fa6fecf37d0148244ea96'
+const DEMO_PREVIEW_REPAIR = 'e2ce16e7144e0523e14bfc18ca5d841edf3d1d8d'
 const REPAIR_RECEIPT = 'tests/fixtures/struct-restack-repair-source.json'
 const REPAIR_PATHS = [
   'src/annotations/annotation-bundle.test.ts',
@@ -228,6 +230,7 @@ const HISTORY_ANCHORS = [
   INTEGRATION_BASE,
   STRUCT_SOURCE,
   REVALIDATOR_REPAIR,
+  DEMO_PREVIEW_REPAIR,
 ]
 for (const anchor of HISTORY_ANCHORS) {
   execFileSync('git', ['cat-file', '-e', `${anchor}^{commit}`])
@@ -360,6 +363,15 @@ function baselineTree(): SourceTree {
       publisherRegistryRecord(repairedRegistry),
     )),
   })
+  const previewRepair = treeAt(DEMO_PREVIEW_REPAIR)
+  for (const path of [
+    'src/lib/struct-demo-preview.ts',
+    'tests/e2e/struct-demo.spec.ts',
+  ]) {
+    const entry = previewRepair.get(path)
+    if (!entry) throw new Error('Incomplete fixed demo preview source')
+    expected.set(path, entry)
+  }
   if (expected.size !== 1863)
     throw new Error('Incomplete immutable source composition')
   return expected
@@ -613,11 +625,11 @@ describe('the inactivity evidence', () => {
     try {
       const head = gitLines(['rev-parse', 'HEAD'])[0]!
       git('init')
-      git('fetch', '--no-tags', PROJECT_ROOT, head, VALIDATED_BASE, REVALIDATOR_REPAIR, STRUCT_SOURCE)
+      git('fetch', '--no-tags', PROJECT_ROOT, head, VALIDATED_BASE, REVALIDATOR_REPAIR, STRUCT_SOURCE, DEMO_PREVIEW_REPAIR)
       git('checkout', '--detach', `${REVALIDATOR_REPAIR}^`)
       for (const [revision, name] of [
         [REVALIDATOR_REPAIR, 'prerequisite'],
-        [VALIDATED_BASE, 'demo'],
+        [DEMO_PREVIEW_REPAIR, 'demo'],
         [head, 'Struct'],
       ]) {
         git('merge', '--squash', '--no-edit', revision!)
@@ -637,6 +649,7 @@ describe('the inactivity evidence', () => {
         ['validated-demo', VALIDATED_BASE],
         ['verified-struct', STRUCT_SOURCE],
         ['revalidator', REVALIDATOR_REPAIR],
+        ['demo-preview', DEMO_PREVIEW_REPAIR],
       ]) git('tag', `struct-restack-proof/${name}-${revision}`, revision!)
       git('branch', 'projected-main', 'HEAD')
       git('symbolic-ref', 'HEAD', 'refs/heads/projected-main')
@@ -672,6 +685,8 @@ describe('the inactivity evidence', () => {
       '.agent/authority-workflows.json',
       '.github/workflows/agent-evidence-publisher.yml',
       'tools/agent-evidence-revalidation.test.mjs',
+      'src/lib/struct-demo-preview.ts',
+      'tests/e2e/struct-demo.spec.ts',
       'src/editorial/records.ts',
       'migrations/editorial/0001_editorial_store.sql',
       'migrations/editorial/0002_editorial_control.sql',

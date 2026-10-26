@@ -170,6 +170,109 @@ finally:
 `], { input: python, stdio: ['pipe', 'pipe', 'pipe'], timeout: 12_000 })
   })
 
+  it('hands off private evidence without widening candidate access or the existing readable-tree sealer', () => {
+    const python = workflow.split("<<'RUCKSACK_CANDIDATE_RUNNER_PY'\n")[1]
+      .split('\n          RUCKSACK_CANDIDATE_RUNNER_PY')[0]
+    const start = workflow.indexOf('          function copyTrustedEvidence(')
+    const copy = workflow.slice(start, workflow.indexOf('\n          const evidenceRootStats', start))
+    execFileSync('python3', ['-I', '-B', '-c', `
+import ast, json, os, pathlib, shutil, stat, subprocess, sys, tempfile, textwrap, types
+payload = json.load(sys.stdin)
+parsed = ast.parse(textwrap.dedent(payload['python']))
+function = next(node for node in parsed.body if isinstance(node, ast.FunctionDef) and node.name == 'seal_readable_tree')
+owner = os.getuid()
+candidate = 65534 if owner != 65534 else 65533
+ownership = {}
+changes = []
+class ModelOS:
+    # Portable ownership model; a separate sudo/native two-UID probe verifies
+    # the real privilege handoff. All file bytes/modes/types here are native.
+    def __getattr__(self, name): return getattr(os, name)
+    def geteuid(self): return 0
+    def lstat(self, target):
+        details = os.lstat(target)
+        values = list(details)
+        values[4] = ownership.get(str(target), details.st_uid)
+        return os.stat_result(values)
+    def chown(self, target, uid, gid, **kwargs):
+        ownership[str(target)] = uid
+        changes.append((str(target), uid, gid))
+namespace = dict(os=ModelOS(), stat=stat, refuse=lambda message: (_ for _ in ()).throw(RuntimeError(message)))
+exec(compile(ast.Module(body=[function], type_ignores=[]), '<actual-readable-tree-sealer>', 'exec'), namespace)
+root = pathlib.Path(tempfile.mkdtemp(prefix='evidence-handoff-'))
+def fixture(name):
+    isolation = root / name
+    evidence = isolation / 'dependencies/source/.agent/evidence'
+    publication = evidence / 'publication'
+    publication.mkdir(parents=True)
+    font = publication / 'Geist-Bold.ttf'
+    font.write_bytes(b'private generated font')
+    os.chmod(font, 0o600)
+    os.chmod(publication, 0o700)
+    ownership[str(publication)] = candidate
+    ownership[str(font)] = candidate
+    namespace['__file__'] = str(isolation / 'candidate-runner.py')
+    return isolation, evidence, font
+
+def seal(evidence, handoff=True):
+    args = dict(owner_uid=owner, candidate_gid=candidate)
+    if handoff: args['candidate_uid'] = candidate
+    namespace['seal_readable_tree'](str(evidence), **args)
+
+def refused(evidence, handoff=True):
+    before = len(changes)
+    try: seal(evidence, handoff)
+    except RuntimeError: pass
+    else: raise AssertionError('unsafe evidence was accepted')
+    assert len(changes) == before, 'rejected input was modified before validation completed'
+try:
+    isolation, evidence, font = fixture('private')
+    original = font.read_bytes()
+    seal(evidence)
+    assert ownership[str(font)] == owner and stat.S_IMODE(font.stat().st_mode) == 0o440
+    assert stat.S_IMODE(evidence.stat().st_mode) == 0o550
+    output = root / 'trusted-output'
+    output.mkdir(mode=0o700)
+    script = "const fs=require('node:fs');const fail=m=>{throw new Error(m)};" + payload['copy'] + "\\ncopyTrustedEvidence('.agent/evidence',process.argv[1]);"
+    subprocess.run([payload['node'], '-e', script, str(output)], cwd=evidence.parent.parent, check=True, capture_output=True)
+    copied = output / 'publication/Geist-Bold.ttf'
+    assert copied.read_bytes() == original and stat.S_IMODE(copied.stat().st_mode) == 0o600
+    assert stat.S_IMODE(output.stat().st_mode) == 0o700
+    _, evidence, font = fixture('ordinary-sealer-still-strict')
+    refused(evidence, handoff=False)
+    _, evidence, font = fixture('symlink')
+    outside = root / 'outside'
+    outside.write_bytes(b'not evidence')
+    os.chmod(outside, 0o600)
+    font.unlink()
+    font.symlink_to(outside)
+    refused(evidence)
+    assert outside.read_bytes() == b'not evidence' and stat.S_IMODE(outside.stat().st_mode) == 0o600
+    _, evidence, font = fixture('hardlink')
+    os.link(font, evidence / 'shared')
+    refused(evidence)
+    _, evidence, font = fixture('special-file')
+    os.mkfifo(evidence / 'pipe')
+    refused(evidence)
+    _, evidence, font = fixture('over-budget')
+    with font.open('r+b') as stream: stream.truncate(64 * 1024 * 1024 + 1)
+    refused(evidence)
+    _, evidence, font = fixture('foreign-owner')
+    ownership[str(font)] = candidate - 1
+    refused(evidence)
+    _, evidence, font = fixture('wrong-root')
+    refused(evidence.parent)
+finally:
+    for directory, _, _ in os.walk(root): os.chmod(directory, 0o700)
+    shutil.rmtree(root)
+`], { input: JSON.stringify({ python, copy, node: process.execPath }), stdio: ['pipe', 'pipe', 'pipe'], timeout: 12_000 })
+    expect(workflow).toContain('sealCandidateReadableTree(path.resolve(".agent/evidence"), "candidate evidence", true)')
+    expect(workflow.indexOf('assertCandidateState("after producer execution")')).toBeLessThan(
+      workflow.indexOf('sealCandidateReadableTree(path.resolve(".agent/evidence"), "candidate evidence", true)'),
+    )
+    expect(workflow).toContain('reap_identity(sudo=sudo, pkill=pkill, pgrep=pgrep, uid=uid)')
+  })
+
   it('fits native Unix sockets at both run-ID bounds without moving the original cleanup lease', () => {
     const parent = workflow.match(/readonly execution_parent="([^"]+)"/)[1]
     const template = workflow.match(/isolation_template="([^"]+)"/)[1]

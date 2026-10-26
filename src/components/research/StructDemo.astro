@@ -1,0 +1,445 @@
+---
+import {
+  STRUCT_DEVICE_MODELS,
+  STRUCT_READER_FONTS,
+} from '../../lib/struct-reader-settings'
+export interface StructDemoSample {
+  id: string
+  title: string
+  description: string
+  pdfUrl: string
+  htmlUrl?: string
+  convertSampleId?: string
+  epubUrls: { label: string; url: string }[]
+  attribution?: {
+    authors: string
+    sourceUrl: string
+    license: string
+    licenseUrl: string
+    changes: string
+  }
+  verdict?: string
+}
+interface Props {
+  samples?: StructDemoSample[]
+}
+const { samples = [] } = Astro.props
+const initialSample =
+  samples.find(
+    (sample) => sample.id === 'docling-technical-report' && sample.htmlUrl,
+  ) ??
+  samples.find((sample) => sample.htmlUrl) ??
+  samples[0]
+---
+
+<section data-struct-demo data-struct-standard-content class="space-y-6">
+  <section class="space-y-2" aria-labelledby="struct-upload-title">
+    <h2 id="struct-upload-title" class="sr-only">Upload a PDF</h2>
+    <form data-struct-form class="flex flex-wrap items-end gap-3">
+      <div class="min-w-0 flex-1 space-y-2">
+        <label class="block text-sm font-medium" for="struct-pdf"
+          >Choose a PDF</label
+        >
+        <input
+          id="struct-pdf"
+          name="pdf"
+          type="file"
+          accept="application/pdf,.pdf"
+          disabled
+          class="block w-full min-w-0 text-sm"
+        />
+      </div>
+      <button
+        type="submit"
+        disabled
+        class="rounded-md border px-4 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >Convert PDF</button
+      >
+    </form>
+    <p data-struct-quota class="text-sm text-muted-foreground">
+      Checking upload availability…
+    </p>
+    <p
+      id="struct-conversion-status"
+      data-struct-status
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      class="text-sm"
+    >
+    </p>
+    <ul data-struct-downloads class="space-y-1 text-sm"></ul>
+    <div class="flex flex-wrap gap-3">
+      <button
+        data-struct-retry
+        type="button"
+        hidden
+        class="text-sm underline underline-offset-4">Retry status check</button
+      >
+      <button
+        data-struct-refresh
+        type="button"
+        hidden
+        class="text-sm underline underline-offset-4"
+        >Check upload availability</button
+      >
+    </div>
+  </section>
+
+  <section class="space-y-3" aria-labelledby="struct-preview-label">
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div class="w-full min-w-0 space-y-2 sm:w-80 sm:flex-none">
+        <label for="struct-sample" class="block text-sm font-medium"
+          >Existing paper</label
+        >
+        <select
+          id="struct-sample"
+          data-struct-sample-select
+          class="w-full rounded-md border bg-background px-3 py-2 text-sm"
+        >
+          {
+            samples.map((sample) => (
+              <option
+                value={sample.id}
+                selected={sample.id === initialSample?.id}
+              >
+                {sample.title}
+              </option>
+            ))
+          }
+          <option data-struct-upload-option value="__upload__" hidden disabled
+            >Your converted PDF</option
+          >
+        </select>
+      </div>
+      <div
+        role="group"
+        aria-label="Reading surface"
+        class="flex flex-wrap gap-1"
+        data-struct-preview-controls
+      >
+        <button type="button" data-struct-device="phone" aria-pressed="true"
+          >Phone</button
+        >
+        <button type="button" data-struct-device="tablet" aria-pressed="false"
+          >Tablet</button
+        >
+        <button type="button" data-struct-device="desktop" aria-pressed="false"
+          >Desktop</button
+        >
+        <button type="button" data-struct-device="eink" aria-pressed="false"
+          >E-ink</button
+        >
+      </div>
+    </div>
+    <details data-struct-reader-settings>
+      <summary
+        class="ml-auto w-fit cursor-pointer text-sm text-muted-foreground"
+        >Reading settings</summary
+      >
+      <fieldset
+        class="struct-reader-settings mt-3 grid min-w-0 grid-cols-2 gap-3 sm:grid-cols-4"
+      >
+        <legend class="sr-only">Reader settings</legend>
+        <label class="col-span-2 text-sm"
+          >Device model
+          <select
+            data-struct-model
+            aria-label="Device model"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          >
+            {
+              STRUCT_DEVICE_MODELS.map((model) => (
+                <option
+                  value={model.id}
+                  data-device={model.device}
+                  hidden={model.device !== 'phone'}
+                >
+                  {model.label}
+                </option>
+              ))
+            }
+            <option value="custom">Custom size</option>
+          </select>
+        </label>
+        <label class="text-sm"
+          >Width (px)
+          <input
+            data-struct-width
+            aria-label="Width (px)"
+            type="number"
+            min="240"
+            max="2560"
+            step="1"
+            value="390"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Height (px)
+          <input
+            data-struct-height
+            aria-label="Height (px)"
+            type="number"
+            min="240"
+            max="2560"
+            step="1"
+            value="844"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Font family
+          <select
+            data-struct-font-family
+            aria-label="Font family"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          >
+            {
+              Object.entries(STRUCT_READER_FONTS).map(([value, font]) => (
+                <option value={value}>{font.label}</option>
+              ))
+            }
+          </select>
+        </label>
+        <label class="text-sm"
+          >Font size (px)
+          <input
+            data-struct-font-size
+            aria-label="Font size (px)"
+            type="number"
+            min="12"
+            max="32"
+            step="1"
+            value="16"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <label class="text-sm"
+          >Margins (px)
+          <input
+            data-struct-margin
+            aria-label="Margins (px)"
+            type="number"
+            min="0"
+            max="80"
+            step="1"
+            value="16"
+            class="mt-1 block w-full rounded-md border bg-background px-3 py-2"
+          />
+        </label>
+        <button
+          data-struct-reader-reset
+          type="button"
+          class="self-end rounded-md border px-3 py-2 text-sm"
+          >Reset reader</button
+        >
+      </fieldset>
+      <p class="mt-2 text-xs text-muted-foreground">Preview settings only.</p>
+    </details>
+    <h2 id="struct-preview-label" data-struct-preview-title class="sr-only">
+      {initialSample?.title ?? 'Reading preview'}
+    </h2>
+    <div
+      data-struct-comparison
+      class="struct-comparison grid min-w-0 gap-6 md:grid-cols-2"
+    >
+      <section
+        class="min-w-0 space-y-3"
+        aria-labelledby="struct-original-label"
+      >
+        <div class="flex items-center justify-between gap-3">
+          <h3 id="struct-original-label" class="text-sm font-medium">
+            Original
+          </h3>
+          <a
+            data-struct-original-link
+            href={initialSample?.pdfUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-sm underline underline-offset-4">Open PDF ↗</a
+          >
+        </div>
+        <div
+          data-struct-original-frame
+          title={`${initialSample?.title ?? 'Source'} · Original PDF`}
+          data-source={initialSample?.pdfUrl}
+          class="struct-original-frame block w-full overflow-auto border bg-white"
+        >
+        </div>
+        <p
+          data-struct-original-empty
+          hidden
+          class="text-sm text-muted-foreground"
+        >
+          The original PDF is not available in this session.
+        </p>
+      </section>
+      <section
+        class="min-w-0 space-y-3"
+        aria-labelledby="struct-reconstruction-label"
+      >
+        <h3 id="struct-reconstruction-label" class="text-sm font-medium">
+          Reconstruction
+        </h3>
+        <p data-struct-preview-error hidden role="status" class="text-sm">
+          Preview unavailable. Download the EPUB to read it.
+        </p>
+        <p
+          data-struct-preview-empty
+          hidden={!initialSample || !!initialSample.htmlUrl}
+          class="text-sm text-muted-foreground"
+        >
+          Convert this paper to preview it.
+        </p>
+        <div
+          data-struct-preview-viewport
+          hidden={!initialSample?.htmlUrl}
+          class="w-full overflow-hidden"
+        >
+          <div
+            data-struct-preview-stage
+            class="mx-auto overflow-hidden border bg-white"
+          >
+            <iframe
+              data-struct-preview-frame
+              title="Reading preview"
+              src={initialSample?.htmlUrl}
+              sandbox=""
+              class="block border-0 bg-white"></iframe>
+          </div>
+        </div>
+      </section>
+    </div>
+    {
+      samples.length === 0 && (
+        <p class="text-sm text-muted-foreground">
+          Samples are being prepared. Please check back soon.
+        </p>
+      )
+    }
+    {
+      samples.map((sample) => (
+        <article
+          data-struct-sample
+          data-sample-id={sample.id}
+          data-sample-title={sample.title}
+          data-sample-pdf={sample.pdfUrl}
+          data-sample-html={sample.htmlUrl ?? ''}
+          hidden={sample.id !== initialSample?.id}
+          class="space-y-2 text-sm"
+        >
+          <h3 class="sr-only">{sample.title}</h3>
+          <div class="flex flex-wrap gap-x-4 gap-y-2">
+            {sample.epubUrls[0] && (
+              <a
+                class="underline underline-offset-4"
+                href={sample.epubUrls[0].url}
+                download={`${sample.id}.epub`}
+              >
+                Download EPUB
+              </a>
+            )}
+          </div>
+          {sample.convertSampleId && (
+            <button
+              type="button"
+              data-struct-convert-sample={sample.convertSampleId}
+              aria-describedby="struct-conversion-status"
+              disabled
+              class="rounded-md border px-4 py-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Convert this paper
+            </button>
+          )}
+          <details>
+            <summary class="cursor-pointer text-muted-foreground">
+              Credits
+            </summary>
+            <div class="space-y-2 py-3">
+              {sample.convertSampleId && (
+                <p>
+                  The server downloads this source from arXiv for your
+                  conversion. This uses one conversion from your daily
+                  allowance; your private EPUB will appear above.
+                </p>
+              )}
+              {sample.attribution && (
+                <>
+                  <p>
+                    By {sample.attribution.authors}.{' '}
+                    <a
+                      class="underline underline-offset-4"
+                      href={sample.attribution.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Original publication
+                    </a>
+                    {' · '}
+                    <a
+                      class="underline underline-offset-4"
+                      href={sample.attribution.licenseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {sample.attribution.license}
+                    </a>
+                  </p>
+                  <p data-struct-changes>{sample.attribution.changes}</p>
+                </>
+              )}
+              {sample.verdict && <p data-struct-verdict>{sample.verdict}</p>}
+            </div>
+          </details>
+        </article>
+      ))
+    }
+  </section>
+  <details class="text-sm text-muted-foreground">
+    <summary class="cursor-pointer">Upload details</summary>
+    <p class="py-3">
+      Server conversion: 10 MiB; 3 attempts/network/day, 20 total/day (UTC),
+      including failures. Links and completed files expire after 72h; pending
+      jobs remain until complete.
+    </p>
+  </details>
+</section>
+<style>
+  .struct-comparison {
+    width: min(calc(100vw - 2rem), 80rem);
+    margin-left: 50%;
+    transform: translateX(-50%);
+  }
+  .struct-original-frame[hidden] {
+    display: none;
+  }
+  .struct-original-frame {
+    height: 844px;
+    max-height: 80vh;
+    min-height: 400px;
+  }
+  [data-struct-device] {
+    padding: 0.5rem 0.625rem;
+    border-bottom: 2px solid transparent;
+    font-size: 0.875rem;
+  }
+  [data-struct-device][aria-pressed='true'] {
+    border-color: currentColor;
+    font-weight: 600;
+  }
+  [data-struct-device]:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+</style>
+<script>
+  import { initializeStructDemos } from '@/lib/struct-demo-client'
+  import { initializeStructPreviews } from '@/lib/struct-demo-preview'
+  initializeStructPreviews()
+  initializeStructDemos()
+  document.addEventListener('astro:page-load', () => {
+    initializeStructPreviews()
+    initializeStructDemos()
+  })
+</script>

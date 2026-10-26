@@ -14,7 +14,8 @@ import SocialIcons from './SocialIcons.astro'
     >
       <div class="flex items-center gap-x-2">
         <span class="text-center text-sm text-muted-foreground">
-          &copy; {new Date().getFullYear()} <span data-i18n-key="footer.rights"
+          &copy; {new Date().getFullYear()}
+          <span data-i18n-key="footer.rights"
             >{getStaticTranslation('footer.rights', 'en')}</span
           >
         </span>
@@ -22,7 +23,8 @@ import SocialIcons from './SocialIcons.astro'
         <p class="text-center text-sm text-muted-foreground">
           <span data-i18n-key="footer.madeWith"
             >{getStaticTranslation('footer.madeWith', 'en')}</span
-          > <Link
+          >
+          <Link
             href="https://github.com/jktrn"
             class="text-foreground"
             external
@@ -30,6 +32,14 @@ import SocialIcons from './SocialIcons.astro'
           >
         </p>
       </div>
+      <nav aria-label="More" class="flex gap-x-4 text-sm">
+        <a href="/about" data-i18n-key="nav.about"
+          >{getStaticTranslation('nav.about', 'en')}</a
+        >
+        <a href="/tags" data-i18n-key="nav.tags"
+          >{getStaticTranslation('nav.tags', 'en')}</a
+        >
+      </nav>
       <SocialIcons links={SOCIAL_LINKS} />
     </div>
   </Container>

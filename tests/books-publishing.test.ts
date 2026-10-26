@@ -23,6 +23,11 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import {
+  SITE_SECTIONS_FILE,
+  verifyProductionSections,
+} from '../tools/deployment/release-gate.mjs'
+
+import {
   bookManifest,
   documentUri,
   renderBookManifest,
@@ -608,6 +613,22 @@ describe('the route comes from the slug', () => {
   })
 })
 
+/** A preview build must contain Books; only a verified production artifact may withhold it. */
+async function assertBookArtifact(directory: string) {
+  if (existsSync(path.join(directory, SITE_SECTIONS_FILE))) {
+    expect(await verifyProductionSections(directory)).toEqual([])
+    return
+  }
+  expect(
+    existsSync(path.join(directory, 'books')),
+    'build exists but has no books/',
+  ).toBe(true)
+  expect(
+    existsSync(path.join(directory, 'books', SLUG)),
+    `build exists but has no books/${SLUG}/`,
+  ).toBe(true)
+}
+
 describe('every node reaches the web', () => {
   it('emits one route per node in the pool, counted by all_nodes()', SLOW, () => {
     const pool = Number(python(COUNT_POOL))
@@ -617,16 +638,38 @@ describe('every node reaches the web', () => {
     expect(book.nodes.length).toBe(pool)
   })
 
-  // `builtSite` is what makes the DOM assertions below conditional, so it has
-  // to mean "no build here", not "the build dropped the book". A `dist/` with
-  // no book in it is the regression, and skipping on it would hide exactly the
-  // failure those assertions exist to catch.
-  it('does not let a missing book route look like a missing build', () => {
+  it('requires Books in preview or verifies the intentionally restricted production artifact', async () => {
     if (!existsSync(DIST)) return
-    expect(existsSync(path.join(DIST, 'books')), 'dist/ exists but has no books/').toBe(
-      true,
+    await assertBookArtifact(DIST)
+  })
+
+  it('still rejects a preview build with missing book routes', async () => {
+    const directory = mkdtempSync(
+      path.join(tmpdir(), 'books-preview-artifact-'),
     )
-    expect(existsSync(bookDist), `dist/ exists but has no books/${SLUG}/`).toBe(true)
+    try {
+      await expect(assertBookArtifact(directory)).rejects.toThrow(
+        'build exists but has no books/',
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('does not let a forged production marker excuse missing book routes', async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), 'books-forged-artifact-'))
+    try {
+      writeFileSync(
+        path.join(directory, SITE_SECTIONS_FILE),
+        JSON.stringify({
+          environment: 'production',
+          sections: ['blog', 'research'],
+        }),
+      )
+      await expect(assertBookArtifact(directory)).rejects.toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it.skipIf(!builtSite)('builds a page for each of them', () => {

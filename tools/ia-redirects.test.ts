@@ -29,7 +29,7 @@ const PARAMS = {
   file: [...EXPORT_PACKAGE_PATHS],
 }
 
-/** The URLs this checkout serves under the prefixes that inherited /research. */
+/** The URLs this checkout serves under the prefixes that inherited /papers. */
 const manifest = sourceRouteManifest(ROOT, PARAMS)
 const table = redirectTable(manifest)
 const byFrom = new Map(table.map((entry) => [entry.from, entry.to]))
@@ -37,9 +37,9 @@ const byFrom = new Map(table.map((entry) => [entry.from, entry.to]))
 describe('the ADR 010 route moves', () => {
   it('leaves no content under the legacy prefixes', () => {
     for (const legacy of [
-      'src/pages/research',
+      'src/pages/papers',
       'src/pages/study',
-      'public/research',
+      'public/papers',
     ]) {
       expect(existsSync(path.join(ROOT, legacy)), legacy).toBe(false)
     }
@@ -52,24 +52,26 @@ describe('the ADR 010 route moves', () => {
   it('reads the route manifest from pages and from public assets', () => {
     expect(manifest).toEqual(
       expect.arrayContaining([
-        '/papers/',
+        '/research/',
         '/library/',
         '/library/pdf-review/',
-        ...PARAMS.id.map((id) => `/papers/${id}/`),
-        ...PARAMS.id.map((id) => `/papers/${id}/manifest.json`),
-        ...PARAMS.id.map((id) => `/papers/${id}/source.json`),
-        '/papers/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
-        '/papers/if-letters-home-could-sing/if-letters-home-could-sing.epub',
-        '/papers/if-letters-home-could-sing/media/image1.png',
-        '/papers/if-letters-home-could-sing/media/image2.jpg',
-        '/papers/if-letters-home-could-sing/media/image3.jpg',
+        ...PARAMS.id.map((id) => `/research/${id}/`),
+        ...PARAMS.id.map((id) => `/research/${id}/manifest.json`),
+        ...PARAMS.id.map((id) => `/research/${id}/source.json`),
+        '/research/if-letters-home-could-sing/if-letters-home-could-sing.pdf',
+        '/research/if-letters-home-could-sing/if-letters-home-could-sing.epub',
+        '/research/if-letters-home-could-sing/media/image1.png',
+        '/research/if-letters-home-could-sing/media/image2.jpg',
+        '/research/if-letters-home-could-sing/media/image3.jpg',
       ]),
     )
   })
 
-  it('owes every served URL under /papers a /research twin', () => {
-    for (const target of manifest.filter((url) => url.startsWith('/papers'))) {
-      const legacy = `/research${target.slice('/papers'.length)}`.replace(
+  it('owes every served URL under /research a /papers twin', () => {
+    for (const target of manifest.filter((url) =>
+      url.startsWith('/research'),
+    )) {
+      const legacy = `/papers${target.slice('/research'.length)}`.replace(
         /\/$/u,
         '',
       )
@@ -80,8 +82,8 @@ describe('the ADR 010 route moves', () => {
   it('redirects every export file of every paper', () => {
     for (const id of PARAMS.id) {
       for (const file of PARAMS.file) {
-        expect(byFrom.get(`/research/${id}/exports/${file}`)).toBe(
-          `/papers/${id}/exports/${file}`,
+        expect(byFrom.get(`/papers/${id}/exports/${file}`)).toBe(
+          `/research/${id}/exports/${file}`,
         )
       }
     }
@@ -92,7 +94,7 @@ describe('the ADR 010 route moves', () => {
     expect(byFrom.get('/study/experiments/pdf-to-epub')).toBe('/library/')
     expect(byFrom.get('/study')).toBe('/library/')
     expect(byFrom.get('/research/pdf-review')).toBe('/library/pdf-review/')
-    expect(byFrom.get('/research')).toBe('/papers/')
+    expect(byFrom.get('/papers')).toBe('/research/')
   })
 
   it('points every redirect at a URL the checkout serves', () => {
@@ -104,12 +106,13 @@ describe('the ADR 010 route moves', () => {
 
   it('answers the rules with and without a trailing slash', () => {
     expect(legacyRedirectTarget('/research/studio/')).toBe('/library/')
-    expect(legacyRedirectTarget('/research/x/manifest.json')).toBe(
-      '/papers/x/manifest.json',
+    expect(legacyRedirectTarget('/papers/x/manifest.json')).toBe(
+      '/research/x/manifest.json',
     )
     expect(legacyRedirectTarget('/study/anything/else')).toBe('/library/')
-    expect(legacyRedirectTarget('/papers/x/')).toBeNull()
-    expect(legacyRedirectTarget('/researcher')).toBeNull()
+    expect(legacyRedirectTarget('/research/x/')).toBeNull()
+    for (const { to } of table) expect(legacyRedirectTarget(to)).toBeNull()
+    expect(legacyRedirectTarget('/paperser')).toBeNull()
     expect(legacySourcesFor('/library/')).toEqual([
       '/research/studio',
       '/study',
@@ -130,7 +133,14 @@ describe('the production release gate', () => {
   /** A built site shaped like `astro build` output, from the real manifest. */
   async function builtSite() {
     const dir = await mkdtemp(path.join(tmpdir(), 'ia-redirects-'))
-    for (const url of manifest) {
+    for (const url of [
+      '/blog/',
+      ...manifest,
+      '/books/',
+      '/books/example/',
+      '/projects/',
+      '/projects/experiments/',
+    ]) {
       const file = url.endsWith('/')
         ? path.join(dir, ...url.split('/').filter(Boolean), 'index.html')
         : path.join(dir, ...url.split('/').filter(Boolean))
@@ -164,11 +174,10 @@ describe('the production release gate', () => {
   /** True when `to` lands inside a tree the production gate withholds. */
   const intoWithheld = (to: string) =>
     WITHHELD_IN_PRODUCTION.some(
-      (withheld) =>
-        to === `/${withheld}` || to.startsWith(`/${withheld}/`),
+      (withheld) => to === `/${withheld}` || to.startsWith(`/${withheld}/`),
     )
 
-  it('withholds the papers and keeps only the redirects that still land', async () => {
+  it('withholds preview sections and keeps only the redirects that still land', async () => {
     outDir = await builtSite()
 
     expect(await applyReleaseGate(outDir)).toEqual([])
@@ -176,7 +185,7 @@ describe('the production release gate', () => {
     for (const withheld of WITHHELD_IN_PRODUCTION) {
       expect(existsSync(path.join(outDir, withheld)), withheld).toBe(false)
     }
-    expect(existsSync(path.join(outDir, 'library', 'index.html'))).toBe(true)
+    expect(existsSync(path.join(outDir, 'research', 'index.html'))).toBe(true)
     const entries = parseRedirectsFile(
       await readFile(path.join(outDir, '_redirects'), 'utf8'),
     )
@@ -187,8 +196,50 @@ describe('the production release gate', () => {
       if (kind !== 'page') continue
       expect(existsSync(stubPath(outDir, from)), from).toBe(!intoWithheld(to))
     }
-    expect(entries.some(({ from }) => from === '/research/studio')).toBe(true)
-    expect(entries.some(({ from }) => from === '/study')).toBe(true)
+    expect(entries.some(({ from }) => from === '/research/studio')).toBe(false)
+    expect(entries.some(({ from }) => from === '/study')).toBe(false)
+  })
+
+  it('marks only the production artifact with its published sections', async () => {
+    outDir = await builtSite()
+    expect(existsSync(path.join(outDir, '_site-sections.json'))).toBe(false)
+    expect(await applyReleaseGate(outDir)).toEqual([])
+    expect(
+      JSON.parse(
+        await readFile(path.join(outDir, '_site-sections.json'), 'utf8'),
+      ),
+    ).toEqual({ environment: 'production', sections: ['blog', 'research'] })
+  })
+
+  it.each(['blog', 'research'])(
+    'refuses production without its %s index',
+    async (section) => {
+      outDir = await builtSite()
+      await rm(path.join(outDir, section, 'index.html'))
+      expect(await applyReleaseGate(outDir)).toContain(
+        `${section}/index.html is missing from the production artifact`,
+      )
+    },
+  )
+
+  it.each([
+    { environment: 'staging', sections: ['blog', 'research'] },
+    { environment: 'production', sections: ['blog'] },
+    {
+      environment: 'production',
+      sections: ['blog', 'research'],
+      private: 'books',
+    },
+  ])('refuses a forged section marker %j', async (marker) => {
+    outDir = await builtSite()
+    await applyReleaseGate(outDir)
+    await writeFile(
+      path.join(outDir, '_site-sections.json'),
+      JSON.stringify(marker),
+    )
+    expect(await verifyPostGate(outDir)).toContain(
+      '_site-sections.json does not declare exactly the production Blog and Research sections',
+    )
   })
 
   it('refuses an artifact that redirects to a page it does not serve', async () => {
@@ -197,25 +248,23 @@ describe('the production release gate', () => {
 
     const problems = await verifyPostGate(outDir)
 
-    expect(problems).toContain('/research/studio redirects to /library/, which the artifact does not serve')
+    expect(problems).toContain(
+      '/research/studio redirects to /library/, which the artifact does not serve',
+    )
   })
 
   it('refuses an artifact whose legacy stubs were deleted', async () => {
     outDir = await builtSite()
-    // What the gate used to do: delete the whole legacy tree after Astro
-    // emitted it, which kept every old URL alive only on the dev server.
-    await rm(path.join(outDir, 'research'), { recursive: true, force: true })
+    await rm(path.join(outDir, 'papers'), { recursive: true, force: true })
 
     const problems = await applyReleaseGate(outDir)
 
-    // `/research` itself redirects into withheld `/papers/`, so the gate drops
-    // it; `/research/studio` lands on `/library/`, which ships, so it must keep
-    // its stub.
-    expect(problems).toContain('/research/studio lost its redirect stub')
+    expect(problems).toContain('/papers lost its redirect stub')
   })
 
   it('refuses an artifact with no redirect table', async () => {
     outDir = await builtSite()
+    await applyReleaseGate(outDir)
     await rm(path.join(outDir, '_redirects'))
 
     expect(await verifyPostGate(outDir)).toEqual([

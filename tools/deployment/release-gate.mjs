@@ -3,7 +3,6 @@ import { readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
   isFilePath,
-  LEGACY_PREFIXES,
   legacyRedirectTarget,
   parseRedirectsFile,
   REDIRECT_STATUS,
@@ -11,29 +10,26 @@ import {
   stubPath,
 } from '../ia-redirects.mjs'
 
-/**
- * What a production build withholds. Publishing research is the owner's call
- * (ADR 010), so the papers stay out of the production artifact exactly as
- * `/research` did, and so does the benchmark queue that moved to `/library`
- * with the importer it embeds. The importer at `/library` itself is not
- * withheld: `/study/experiments/pdf-to-epub` already shipped it.
- */
+/** Until populated, these entire sections are preview-only (ADR 010 addendum). */
 export const WITHHELD_IN_PRODUCTION = Object.freeze([
-  'papers',
-  'library/pdf-review',
+  'books',
+  'library',
+  'projects',
 ])
 
-/**
- * Removes the withheld trees and nothing else. The legacy `/research` and
- * `/study` trees now hold only redirect stubs, and `_redirects` holds the
- * 301s; deleting either would turn every old URL into a 404 in the deployed
- * artifact even though the dev server redirects it.
- */
+export const SITE_SECTIONS_FILE = '_site-sections.json'
+const PRODUCTION_SECTIONS = Object.freeze(['blog', 'research'])
+
+/** Remove preview-only trees and redirects into them before validating the artifact. */
 export async function applyReleaseGate(outDir) {
   for (const withheld of WITHHELD_IN_PRODUCTION) {
     await rm(path.join(outDir, withheld), { recursive: true, force: true })
   }
   await dropRedirectsIntoWithheld(outDir)
+  await writeFile(
+    path.join(outDir, SITE_SECTIONS_FILE),
+    `${JSON.stringify({ environment: 'production', sections: PRODUCTION_SECTIONS })}\n`,
+  )
   return verifyPostGate(outDir)
 }
 
@@ -98,23 +94,64 @@ function serves(outDir, to) {
     : existsSync(path.join(outDir, ...segments, 'index.html'))
 }
 
+/** Validate both the section declaration and the actual production artifact. */
+export async function verifyProductionSections(outDir) {
+  const problems = []
+  let marker
+  try {
+    marker = JSON.parse(
+      await readFile(path.join(outDir, SITE_SECTIONS_FILE), 'utf8'),
+    )
+  } catch {
+    problems.push(`${SITE_SECTIONS_FILE} is missing or invalid`)
+  }
+  if (
+    marker &&
+    (Object.keys(marker).sort().join(',') !== 'environment,sections' ||
+      marker.environment !== 'production' ||
+      !Array.isArray(marker.sections) ||
+      marker.sections.length !== PRODUCTION_SECTIONS.length ||
+      marker.sections.some(
+        (section, index) => section !== PRODUCTION_SECTIONS[index],
+      ))
+  ) {
+    problems.push(
+      `${SITE_SECTIONS_FILE} does not declare exactly the production Blog and Research sections`,
+    )
+  } else if (
+    marker === null ||
+    (marker !== undefined && typeof marker !== 'object')
+  ) {
+    problems.push(
+      `${SITE_SECTIONS_FILE} does not declare exactly the production Blog and Research sections`,
+    )
+  }
+  for (const section of PRODUCTION_SECTIONS) {
+    if (!existsSync(path.join(outDir, section, 'index.html'))) {
+      problems.push(
+        `${section}/index.html is missing from the production artifact`,
+      )
+    }
+  }
+  for (const withheld of WITHHELD_IN_PRODUCTION) {
+    if (existsSync(path.join(outDir, withheld)))
+      problems.push(`${withheld} was not withheld`)
+  }
+  return problems
+}
+
 /**
  * Checks the artifact that actually deploys, after the gate ran: every
  * redirect is still there, every legacy page still has its stub, no legacy
  * tree carries content, and nothing withheld survived.
  */
 export async function verifyPostGate(outDir) {
-  const problems = []
+  const problems = await verifyProductionSections(outDir)
   const redirectsPath = path.join(outDir, REDIRECTS_FILE)
   if (!existsSync(redirectsPath)) {
-    return [`${REDIRECTS_FILE} is missing from the built output`]
+    return [...problems, `${REDIRECTS_FILE} is missing from the built output`]
   }
   const entries = parseRedirectsFile(await readFile(redirectsPath, 'utf8'))
-  for (const prefix of LEGACY_PREFIXES) {
-    if (!entries.some(({ from }) => from.startsWith(prefix))) {
-      problems.push(`${REDIRECTS_FILE} redirects nothing under ${prefix}`)
-    }
-  }
   for (const { from, to, status } of entries) {
     if (status !== REDIRECT_STATUS) {
       problems.push(`${from} redirects with ${status}, not ${REDIRECT_STATUS}`)
@@ -124,7 +161,9 @@ export async function verifyPostGate(outDir) {
     }
     if (from.includes('*')) continue
     if (!serves(outDir, to)) {
-      problems.push(`${from} redirects to ${to}, which the artifact does not serve`)
+      problems.push(
+        `${from} redirects to ${to}, which the artifact does not serve`,
+      )
     }
     const expected = legacyRedirectTarget(from)
     if (expected !== to) {
@@ -132,11 +171,6 @@ export async function verifyPostGate(outDir) {
     }
     if (!isFilePath(from) && !existsSync(stubPath(outDir, from))) {
       problems.push(`${from} lost its redirect stub`)
-    }
-  }
-  for (const withheld of WITHHELD_IN_PRODUCTION) {
-    if (existsSync(path.join(outDir, withheld))) {
-      problems.push(`${withheld} was not withheld`)
     }
   }
   return problems

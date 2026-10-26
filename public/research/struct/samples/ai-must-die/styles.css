@@ -1,0 +1,24 @@
+html { font-size: 15px; }
+body { font-family: Georgia, 'Times New Roman', serif; line-height: 1.65; margin: 0; padding: 0 0.6em; -webkit-hyphens: auto; hyphens: auto; }
+header h1 { font-size: 2.400em; line-height: 1.2; margin: 1.2em 0 0.4em; }
+h2 { font-size: 1.333em; margin: 1.4em 0 0.5em; line-height: 1.25; break-after: avoid; }
+h3 { font-size: 1.15em; margin: 1.2em 0 0.4em; break-after: avoid; }
+h4, h5, h6 { font-size: 1em; margin: 1em 0 0.3em; font-style: italic; break-after: avoid; }
+p { margin: 0 0 0.75em; orphans: 2; widows: 2; }
+p.authors { font-style: italic; }
+figure { margin: 1em 0; break-inside: avoid; text-align: center; }
+figure.equation { text-align: center; }
+img { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+figcaption, p.caption { font-size: 0.9em; text-align: left; margin: 0.4em 0; }
+table { border-collapse: collapse; margin: 1em 0; font-size: 0.85em; width: 100%; }
+th, td { border: 1px solid #888; padding: 0.2em 0.4em; vertical-align: top; text-align: left; white-space: pre-line; }
+th { font-weight: bold; }
+pre { font-family: Menlo, Consolas, monospace; font-size: 0.8em; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0.8em 0; }
+code { font-family: Menlo, Consolas, monospace; }
+math { font-size: 1.05em; }
+a { color: inherit; text-decoration: underline; }
+sup { line-height: 0; font-size: 0.75em; vertical-align: super; }
+aside[epub|type~="footnote"], aside[role="doc-footnote"] { font-size: 0.85em; margin: 0.4em 0; border-top: 1px solid #ccc; padding-top: 0.3em; }
+ol, ul { margin: 0 0 0.75em 1.4em; padding: 0; }
+li { margin: 0 0 0.25em; }
+.visually-hidden, .additional-semantic-reference { clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }

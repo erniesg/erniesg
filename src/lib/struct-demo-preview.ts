@@ -138,7 +138,12 @@ export function initializeStructPreviews() {
       async function renderReadingDocument() {
         const revision = ++documentRevision
         if (select.value === '__upload__') {
-          if (uploaded) frame.srcdoc = readerDocument(uploaded.html, settings)
+          if (uploaded) {
+            // Install the document before removing the sample URL so no
+            // about:blank navigation races this single srcdoc update.
+            frame.srcdoc = readerDocument(uploaded.html, settings)
+            frame.removeAttribute('src')
+          }
           return
         }
         const source = articles.find(
@@ -205,9 +210,10 @@ export function initializeStructPreviews() {
         })
         if (select.value === '__upload__') {
           title.textContent = uploaded?.title ?? uploadedOption.textContent
-          frame.removeAttribute('src')
-          if (uploaded) frame.srcdoc = readerDocument(uploaded.html, settings)
-          else frame.removeAttribute('srcdoc')
+          if (!uploaded) {
+            frame.removeAttribute('srcdoc')
+            frame.removeAttribute('src')
+          }
           viewport.hidden = !uploaded
           error.hidden = !!uploaded
           empty.hidden = true

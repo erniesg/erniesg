@@ -1040,7 +1040,22 @@ for (const outcome of ['success', 'failure'] as const) {
     )
     await expect(page.getByLabel('Existing paper')).toHaveValue('ai-must-die')
     await expect(page.locator('[data-struct-preview-error]')).toBeHidden()
-    await page.evaluate(() =>
+    await page.evaluate(() => {
+      const frame = document.querySelector<HTMLIFrameElement>(
+        '[data-struct-preview-frame]',
+      )!
+      // Removing src first navigates to about:blank; duplicate srcdoc writes
+      // can then leave that blank document committed despite the new label.
+      const observer = new MutationObserver((records) => {
+        frame.dataset.previewNavigation = records
+          .map((record) => record.attributeName)
+          .join(',')
+        observer.disconnect()
+      })
+      observer.observe(frame, {
+        attributes: true,
+        attributeFilter: ['srcdoc', 'src'],
+      })
       document.querySelector('[data-struct-demo]')!.dispatchEvent(
         new CustomEvent('struct:preview-ready', {
           detail: {
@@ -1049,7 +1064,11 @@ for (const outcome of ['success', 'failure'] as const) {
             title: 'B.pdf',
           },
         }),
-      ),
+      )
+    })
+    await expect(page.locator('[data-struct-preview-frame]')).toHaveAttribute(
+      'data-preview-navigation',
+      'srcdoc,src',
     )
     await expect(page.getByLabel('Existing paper')).toHaveValue('__upload__')
     await expect(page.locator('[data-struct-upload-option]')).toHaveText(

@@ -24,9 +24,9 @@
       "authority_bearing": true,
       "review_class": "generated-authority-workflow-security",
       "classification": "frozen-legacy",
-      "sha256": "e20e421f1c703baea8101ac02230b13a23bcd7438776c5978bb7bf6a2c80de0c",
-      "bytes": 255151,
-      "lines": 5098,
+      "sha256": "d0e6e870cf1f53c04e26eee67257e10630daff1845a416d2cc8646a02aaf86c5",
+      "bytes": 259944,
+      "lines": 5186,
       "triggers": ["workflow_run:agent-evidence:completed"],
       "permissions": {
         "top_level": {},
@@ -52,7 +52,7 @@
       },
       "size_exception": {
         "loc_threshold": 3000,
-        "lines": 5098,
+        "lines": 5186,
         "authorized_by": "#281",
         "reason": "Authority-bearing generated evidence publisher. The workflow exceeds the 3,000-line entry-gate threshold by construction and is byte-frozen pending a separately reviewed migration to a pinned reviewed generator; the exception scope is this single frozen artifact only."
       },

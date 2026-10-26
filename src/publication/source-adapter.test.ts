@@ -1,20 +1,33 @@
 import { describe, expect, it } from 'vitest'
-import rawPaper from '../research/papers/semantic-responsive-typesetting.json'
-import { researchPaperSchema } from '../research/schema'
-import { createAssetBundle } from './asset-bundle'
-import {
-  adaptResearchPaper,
-  researchPaperToPublicationGraph,
-} from './research-paper-adapter'
+import { loadAdapterCase } from '../../tests/fixtures/struct-adapter-parity/cases'
+import { buildStructDocument } from '../struct-adapters'
+import { adaptStructDocument } from './struct-adapter'
 import {
   adapterProvenanceSchema,
   createPublicationContractReceipt,
   validatePublicationSourceResult,
+  type PublicationSourceResult,
 } from './source-adapter'
 
+/**
+ * The source-adapter contract is exercised on the one projection that
+ * remains.
+ *
+ * The forward `ResearchPaper` -> `PublicationGraph` producer is retired
+ * (EG-15): it had no production caller, and a second producer of the
+ * renderer plan would have competed with the Struct projection for the
+ * authority of the published text. The contract below is therefore proven on
+ * the app-owned Struct projection, driven by the repository's own frozen
+ * reconstruction fixture and the app-owned ingress conversion.
+ */
+async function structResult(): Promise<PublicationSourceResult> {
+  const document = buildStructDocument(await loadAdapterCase('ordinary-pdf'))
+  return adaptStructDocument(document)
+}
+
 describe('PublicationSourceAdapter', () => {
-  it('returns the versioned graph, asset, diagnostics and provenance boundary', () => {
-    const result = adaptResearchPaper(researchPaperSchema.parse(rawPaper))
+  it('returns the versioned graph, asset, diagnostics and provenance boundary', async () => {
+    const result = await structResult()
     const validated = validatePublicationSourceResult(result)
     expect({
       ...validated,
@@ -28,7 +41,12 @@ describe('PublicationSourceAdapter', () => {
       graph: { version: '1.0.0' },
       assetBundle: { descriptor: { version: '1.0.0' } },
       diagnostics: [],
-      provenance: { adapterVersion: '1.0.0', sourceType: 'research-paper' },
+      provenance: {
+        adapterId: 'struct-document',
+        adapterVersion: '1.0.0',
+        sourceType: 'pdf',
+        sourceId: 'born-digital.pdf',
+      },
     })
   })
 
@@ -49,34 +67,21 @@ describe('PublicationSourceAdapter', () => {
     ).toBe(false)
   })
 
-  it('rejects malformed bundles and dangling graph asset references', () => {
-    const paper = researchPaperSchema.parse(rawPaper)
-    const graph = researchPaperToPublicationGraph(paper)
+  it('rejects malformed bundles and dangling graph asset references', async () => {
+    const result = await structResult()
+    const graph = result.graph
     graph.nodes[0].variants.push({
       kind: 'compact',
       assetId: 'missing',
       reviewed: true,
     })
-    expect(() =>
-      validatePublicationSourceResult({
-        graph,
-        assetBundle: createAssetBundle(
-          { version: '1.0.0', assets: [] },
-          async () => new Uint8Array(),
-        ),
-        diagnostics: [],
-        provenance: {
-          adapterId: 'test',
-          adapterVersion: '1.0.0',
-          sourceType: 'research-paper',
-          sourceId: 'fixture',
-        },
-      }),
-    ).toThrow(/missing asset/)
+    expect(() => validatePublicationSourceResult({ ...result, graph })).toThrow(
+      /missing asset/,
+    )
   })
 
-  it('creates deterministic exact-head contract receipts', () => {
-    const result = adaptResearchPaper(researchPaperSchema.parse(rawPaper))
+  it('creates deterministic exact-head contract receipts', async () => {
+    const result = await structResult()
     const environment = {
       toolchain: {
         node: 'v24.0.0',

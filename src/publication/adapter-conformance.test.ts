@@ -1,18 +1,5 @@
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import { createHash } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
-import equivalentPayload from '../../tests/fixtures/payload/equivalent-publication.json'
-import mapping from '../../tests/fixtures/payload/mapping.json'
-import {
-  createDefaultPublicationAdapterRegistry,
-  PublicationAdapterRegistry,
-} from './adapter-registry'
-import { adaptAstroBlogEntry } from './adapters/astro'
-import {
-  adaptPayloadLexical,
-  payloadLexicalSourceAdapter,
-} from './adapters/payload-lexical'
 import {
   canonicalPublicationGraph,
   canonicalPublicationSourceResult,
@@ -20,119 +7,152 @@ import {
   canonicalPublicationSubsetSha256,
   comparePublicationOutputReceipts,
   comparePublicationSemanticSubset,
-  sourceReceiptHashes,
 } from './adapter-conformance'
-import type { AssetDescriptor } from './asset-bundle'
+import {
+  createAssetBundle,
+  type AssetBundle,
+  type AssetDescriptor,
+} from './asset-bundle'
+import {
+  createDefaultPublicationAdapterRegistry,
+  PublicationAdapterRegistry,
+} from './adapter-registry'
+import { astroPublicationAdapter } from './adapters/astro'
 import {
   publicationGraphSchema,
   serializePublicationGraph,
+  type PublicationGraph,
 } from './schema'
 import {
   PUBLICATION_PROFILES,
   publicationGraphToHtml,
 } from './renderers/vivliostyle'
-import { createPublicationContractReceipt } from './source-adapter'
+import type { PublicationSourceResult } from './source-adapter'
+
+/**
+ * The canonicalization under test is adapter-agnostic: it projects a
+ * publication graph onto its semantic subset. The retired Payload-Lexical
+ * adapter used to be the convenient fixture producer for these cases, so the
+ * fixtures are now stated directly as the graphs the canonicalizer sees.
+ */
+const FIXTURE_ADAPTER_ID = 'conformance-fixture'
+const FIXTURE_EDITION_ID = 'edition'
+const FIXTURE_SOURCE_ID = 'conformance:fixture'
+
+function fixtureEnvelope(node: Record<string, unknown>) {
+  return {
+    locale: 'en',
+    direction: 'auto',
+    requirement: 'required',
+    importance: 'essential',
+    provenance: {
+      adapterId: FIXTURE_ADAPTER_ID,
+      sourceId: FIXTURE_SOURCE_ID,
+      sourceRevision: '1',
+      evidence: [FIXTURE_SOURCE_ID],
+      idOrigin: 'source',
+    },
+    accessibility: { decorative: false },
+    variants: [],
+    permittedTransformationIds: [],
+    edition: { editionId: FIXTURE_EDITION_ID },
+    ...node,
+  }
+}
+
+function fixtureGraph(
+  nodes: Array<Record<string, unknown>>,
+  options: { id?: string; title?: string } = {},
+): PublicationGraph {
+  return publicationGraphSchema.parse({
+    version: '1.0.0',
+    id: options.id ?? 'conformance-fixture',
+    metadata: {
+      title: options.title ?? 'Conformance fixture',
+      contributors: [],
+      defaultLocale: 'en',
+      defaultDirection: 'auto',
+      keywords: [],
+    },
+    edition: { id: FIXTURE_EDITION_ID, locale: 'en', direction: 'auto' },
+    nodes: nodes.map((node) => fixtureEnvelope(node)),
+  })
+}
+
+function fixtureSourceResult(
+  graph: PublicationGraph,
+  assets: AssetDescriptor[] = [],
+  bytes: (descriptor: AssetDescriptor) => Uint8Array = () => new Uint8Array(),
+): PublicationSourceResult {
+  const assetBundle: AssetBundle = createAssetBundle(
+    { version: '1.0.0', assets },
+    async (descriptor) => bytes(descriptor),
+  )
+  return {
+    graph,
+    assetBundle,
+    diagnostics: [],
+    provenance: {
+      adapterId: FIXTURE_ADAPTER_ID,
+      adapterVersion: '1.0.0',
+      sourceType: 'astro',
+      sourceId: FIXTURE_SOURCE_ID,
+      sourceRevision: '1',
+    },
+  }
+}
 
 describe('publication source adapter conformance', () => {
-  it('registers Payload through the same validated bundle boundary', async () => {
+  it('does not register the retired Payload publication adapter', async () => {
     const registry = createDefaultPublicationAdapterRegistry()
-    const bundle = await registry.resolve('payload-lexical', {
-      id: 'conformance',
-      title: 'Conformance',
-      content: { root: { children: [{ type: 'paragraph', children: [{ type: 'text', text: 'One' }] }] } },
-    })
-    expect(bundle.provenance.sourceType).toBe('payload')
-    expect(bundle.graph.nodes[0].provenance.adapterId).toBe('payload-lexical')
+    await expect(registry.resolve('payload-lexical', {})).rejects.toThrow(
+      /Unknown publication source adapter: payload-lexical/,
+    )
   })
 
   it('rejects duplicate registrations and unknown adapters', async () => {
-    const registry = new PublicationAdapterRegistry().register(payloadLexicalSourceAdapter)
-    expect(() => registry.register(payloadLexicalSourceAdapter)).toThrow(/already registered/)
-    await expect(registry.resolve('missing', {})).rejects.toThrow(/Unknown publication source adapter/)
-  })
-
-  it('gives equivalent Astro and Payload fixtures the same canonical semantics and contracts', async () => {
-    const contentRoot = await mkdtemp(resolve(tmpdir(), 'publication-conformance-'))
-    const entryRoot = resolve(contentRoot, 'payload-equivalent')
-    try {
-      await mkdir(entryRoot)
-      await writeFile(
-        resolve(entryRoot, 'index.mdx'),
-        await readFile(
-          resolve('tests/fixtures/publication/astro/payload-equivalent.mdx'),
-          'utf8',
-        ),
-      )
-      await copyFile(
-        resolve('public/favicon-16x16.png'),
-        resolve(entryRoot, 'fixture-image.png'),
-      )
-      const astro = await adaptAstroBlogEntry({
-        entryId: 'payload-equivalent',
-        contentRoot,
-      })
-      const payload = adaptPayloadLexical(equivalentPayload, mapping)
-      expect(comparePublicationSemanticSubset(astro, payload)).toBe(true)
-      expect(canonicalPublicationSubsetSha256(astro)).toBe(
-        canonicalPublicationSubsetSha256(payload),
-      )
-
-      const astroHashes = sourceReceiptHashes(astro)
-      const payloadHashes = sourceReceiptHashes(payload)
-      expect(payloadHashes.canonicalSubsetSha256).toBe(
-        astroHashes.canonicalSubsetSha256,
-      )
-      expect(payloadHashes.sourceRevision).not.toBe(astroHashes.sourceRevision)
-
-      const environment = {
-        toolchain: {
-          node: 'v22.22.3',
-          packageLockSha256: 'a'.repeat(64),
-        },
-        repository: { commit: 'b'.repeat(40), dirty: false as const },
-      }
-      const astroReceipt = createPublicationContractReceipt(astro, environment)
-      const payloadReceipt = createPublicationContractReceipt(payload, environment)
-      expect(payloadReceipt.contracts).toEqual(astroReceipt.contracts)
-      expect(payloadReceipt.source).toEqual({
-        adapterId: 'payload-lexical',
-        sourceType: 'payload',
-        mappingVersion: '1.0.0',
-      })
-    } finally {
-      await rm(contentRoot, { recursive: true, force: true })
-    }
+    const registry = new PublicationAdapterRegistry().register(
+      astroPublicationAdapter,
+    )
+    expect(() => registry.register(astroPublicationAdapter)).toThrow(
+      /already registered/,
+    )
+    await expect(registry.resolve('missing', {})).rejects.toThrow(
+      /Unknown publication source adapter/,
+    )
   })
 
   it('normalizes internal fragment hrefs with their canonical target ids', () => {
-    const left = adaptPayloadLexical(
+    const left = fixtureGraph([
       {
-        id: 'fragment-normalization',
-        title: 'Fragment normalization',
-        content: {
-          root: {
-            children: [
-              {
-                type: 'paragraph',
-                children: [
-                  {
-                    type: 'citation',
-                    value: 'left-target',
-                    label: 'Inline target',
-                  },
-                ],
-              },
-              {
-                type: 'relationship',
-                value: 'left-target',
-                label: 'Block target',
-              },
-            ],
+        id: 'inline-target-paragraph',
+        type: 'paragraph',
+        text: 'Inline target',
+        inlineRuns: [
+          {
+            start: 0,
+            end: 13,
+            href: '#left-target',
+            relationshipId: 'relationship-1',
+            semanticRole: 'cross-reference',
+            targetIds: ['left-target'],
           },
-        },
+        ],
       },
-      { relationships: { citation: { role: 'cross-reference' } } },
-    ).graph
+      {
+        id: 'block-target-reference',
+        type: 'reference',
+        targetIds: ['left-target'],
+        href: '#left-target',
+        text: 'Block target',
+      },
+      {
+        id: 'left-target',
+        type: 'reference',
+        targetIds: [],
+        text: 'Block target',
+      },
+    ])
     const right = structuredClone(left)
     for (const node of right.nodes) {
       if (node.id === 'left-target') node.id = 'right-target'
@@ -164,37 +184,29 @@ describe('publication source adapter conformance', () => {
   })
 
   it('canonicalizes adjacent equivalent inline runs across source segmentation', () => {
-    const segmented = adaptPayloadLexical({
-      id: 'segmented-inline-runs',
-      title: 'Segmented inline runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [
-                { type: 'text', text: 'a', format: 'bold' },
-                { type: 'text', text: 'b', format: 'bold' },
-              ],
-            },
+    const segmented = fixtureSourceResult(
+      fixtureGraph([
+        {
+          id: 'paragraph',
+          type: 'paragraph',
+          text: 'ab',
+          inlineRuns: [
+            { start: 0, end: 1, bold: true },
+            { start: 1, end: 2, bold: true },
           ],
         },
-      },
-    })
-    const combined = adaptPayloadLexical({
-      id: 'combined-inline-runs',
-      title: 'Segmented inline runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'ab', format: 'bold' }],
-            },
-          ],
+      ]),
+    )
+    const combined = fixtureSourceResult(
+      fixtureGraph([
+        {
+          id: 'paragraph',
+          type: 'paragraph',
+          text: 'ab',
+          inlineRuns: [{ start: 0, end: 2, bold: true }],
         },
-      },
-    })
+      ]),
+    )
 
     expect(comparePublicationSemanticSubset(segmented, combined)).toBe(true)
     expect(canonicalPublicationSubsetSha256(segmented)).toBe(
@@ -211,20 +223,14 @@ describe('publication source adapter conformance', () => {
   })
 
   it('canonicalizes overlapping inline runs independently of array order', () => {
-    const base = adaptPayloadLexical({
-      id: 'ordered-inline-runs',
-      title: 'Ordered inline runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'abcdef' }],
-            },
-          ],
-        },
+    const base = fixtureGraph([
+      {
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'abcdef',
+        inlineRuns: [],
       },
-    }).graph
+    ])
     const withRuns = (runs: Array<Record<string, unknown>>) => {
       const clone = structuredClone(base)
       for (const node of clone.nodes)
@@ -252,20 +258,14 @@ describe('publication source adapter conformance', () => {
   })
 
   it('preserves authored order for overlapping vertical-align runs', () => {
-    const base = adaptPayloadLexical({
-      id: 'ordered-vertical-align-runs',
-      title: 'Ordered vertical align runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'xy' }],
-            },
-          ],
-        },
+    const base = fixtureGraph([
+      {
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'xy',
+        inlineRuns: [],
       },
-    }).graph
+    ])
     const withRuns = (runs: Array<Record<string, unknown>>) => {
       const clone = structuredClone(base)
       for (const node of clone.nodes)
@@ -299,20 +299,14 @@ describe('publication source adapter conformance', () => {
   })
 
   it('canonicalizes non-overlapping vertical-align runs independently of array order', () => {
-    const base = adaptPayloadLexical({
-      id: 'non-overlapping-vertical-align-runs',
-      title: 'Non-overlapping vertical align runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'abcd' }],
-            },
-          ],
-        },
+    const base = fixtureGraph([
+      {
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'abcd',
+        inlineRuns: [],
       },
-    }).graph
+    ])
     const withRuns = (runs: Array<Record<string, unknown>>) => {
       const clone = structuredClone(base)
       for (const node of clone.nodes)
@@ -348,20 +342,14 @@ describe('publication source adapter conformance', () => {
   })
 
   it('folds adjacent equivalent vertical-align runs', () => {
-    const base = adaptPayloadLexical({
-      id: 'adjacent-vertical-align-runs',
-      title: 'Adjacent vertical align runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'ab' }],
-            },
-          ],
-        },
+    const base = fixtureGraph([
+      {
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'ab',
+        inlineRuns: [],
       },
-    }).graph
+    ])
     const withRuns = (runs: Array<Record<string, unknown>>) => {
       const clone = structuredClone(base)
       for (const node of clone.nodes)
@@ -390,20 +378,14 @@ describe('publication source adapter conformance', () => {
   })
 
   it('folds adjacent equivalent runs even when an overlapping style separates them', () => {
-    const base = adaptPayloadLexical({
-      id: 'interleaved-inline-runs',
-      title: 'Interleaved inline runs',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'paragraph',
-              children: [{ type: 'text', text: 'abcd' }],
-            },
-          ],
-        },
+    const base = fixtureGraph([
+      {
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'abcd',
+        inlineRuns: [],
       },
-    }).graph
+    ])
     const withRuns = (runs: Array<Record<string, unknown>>) => {
       const clone = structuredClone(base)
       for (const node of clone.nodes)
@@ -436,59 +418,31 @@ describe('publication source adapter conformance', () => {
 
   it('preserves authored link boundaries through canonical serialization in every profile', () => {
     const canonical = canonicalPublicationSourceResult(
-      adaptPayloadLexical({
-        id: 'canonical-link-boundaries',
-        title: 'Canonical link boundaries',
-        content: {
-          root: {
-            type: 'root',
-            children: [
-              {
-                type: 'paragraph',
-                children: [
-                  {
-                    type: 'link',
-                    url: 'https://example.com/formatted',
-                    children: [
-                      { type: 'text', text: 'Read ' },
-                      { type: 'text', text: 'more', format: 'bold' },
-                    ],
-                  },
-                  {
-                    type: 'link',
-                    url: 'https://example.com/adjacent',
-                    children: [{ type: 'text', text: 'one' }],
-                  },
-                  {
-                    type: 'link',
-                    url: 'https://example.com/adjacent',
-                    children: [{ type: 'text', text: 'two' }],
-                  },
-                  {
-                    type: 'link',
-                    url: 'https://example.com/break',
-                    children: [
-                      { type: 'text', text: 'up' },
-                      { type: 'linebreak' },
-                      { type: 'text', text: 'down' },
-                    ],
-                  },
-                ],
-              },
-              {
-                type: 'paragraph',
-                children: [
-                  {
-                    type: 'link',
-                    url: 'https://example.com/adjacent',
-                    children: [{ type: 'text', text: 'block' }],
-                  },
-                ],
-              },
+      fixtureSourceResult(
+        fixtureGraph([
+          {
+            id: 'paragraph',
+            type: 'paragraph',
+            text: 'Read moreonetwoup\ndown',
+            inlineRuns: [
+              { start: 5, end: 9, bold: true },
+              { start: 0, end: 9, href: 'https://example.com/formatted' },
+              { start: 9, end: 12, href: 'https://example.com/adjacent' },
+              { start: 12, end: 15, href: 'https://example.com/adjacent' },
+              { start: 17, end: 18, hardBreak: true },
+              { start: 15, end: 22, href: 'https://example.com/break' },
             ],
           },
-        },
-      }),
+          {
+            id: 'block-paragraph',
+            type: 'paragraph',
+            text: 'block',
+            inlineRuns: [
+              { start: 0, end: 5, href: 'https://example.com/adjacent' },
+            ],
+          },
+        ]),
+      ),
     )
     const graph = publicationGraphSchema.parse(
       JSON.parse(serializePublicationGraph(canonical.graph)),
@@ -543,25 +497,34 @@ describe('publication source adapter conformance', () => {
   })
 
   it('preserves adjacent target-only cross-reference ranges through canonicalization', () => {
-    const adapted = adaptPayloadLexical(
-      {
-        id: 'canonical-target-only-boundaries',
-        title: 'Canonical target-only boundaries',
-        content: {
-          root: {
-            children: [
-              {
-                type: 'paragraph',
-                children: [
-                  { type: 'citation', value: 'target', label: 'a' },
-                  { type: 'citation', value: 'target', label: 'b' },
-                ],
-              },
-            ],
-          },
+    const adapted = fixtureSourceResult(
+      fixtureGraph([
+        {
+          id: 'paragraph',
+          type: 'paragraph',
+          text: 'ab',
+          inlineRuns: [
+            {
+              start: 0,
+              end: 1,
+              semanticRole: 'cross-reference',
+              targetIds: ['target'],
+            },
+            {
+              start: 1,
+              end: 2,
+              semanticRole: 'cross-reference',
+              targetIds: ['target'],
+            },
+          ],
         },
-      },
-      { relationships: { citation: { role: 'cross-reference' } } },
+        {
+          id: 'target',
+          type: 'reference',
+          targetIds: [],
+          text: 'b',
+        },
+      ]),
     )
     const graph = publicationGraphSchema.parse({
       ...adapted.graph,
@@ -606,39 +569,34 @@ describe('publication source adapter conformance', () => {
   })
 
   it('canonicalizes relationship anchors separately from publication node ids', () => {
-    const graphWithFootnote = (documentId: string) => {
-      const graph = adaptPayloadLexical(
+    const graphWithFootnote = (relationshipId: string) => {
+      const graph = fixtureGraph([
         {
-          id: documentId,
-          title: 'Relationship anchor normalization',
-          content: {
-            root: {
-              children: [
-                {
-                  type: 'paragraph',
-                  id: 'paragraph',
-                  children: [
-                    {
-                      type: 'citation',
-                      value: 'target-note',
-                      label: 'Footnote',
-                    },
-                  ],
-                },
-              ],
+          id: 'paragraph',
+          type: 'paragraph',
+          text: 'Footnote',
+          inlineRuns: [
+            {
+              start: 0,
+              end: 8,
+              href: '#target-note',
+              relationshipId,
+              semanticRole: 'cross-reference',
+              targetIds: ['target-note'],
             },
-          },
+          ],
         },
-        { relationships: { citation: { role: 'cross-reference' } } },
-      ).graph
+        {
+          id: 'target-note',
+          type: 'reference',
+          targetIds: [],
+          text: 'Footnote',
+        },
+      ])
       const paragraph = graph.nodes.find((node) => node.type === 'paragraph')
-      const relationshipId =
-        paragraph?.type === 'paragraph'
-          ? paragraph.inlineRuns?.[0]?.relationshipId
-          : undefined
       const targetIndex = graph.nodes.findIndex((node) => node.id === 'target-note')
       const target = graph.nodes[targetIndex]
-      if (!relationshipId || target?.type !== 'reference')
+      if (paragraph?.type !== 'paragraph' || target?.type !== 'reference')
         throw new Error('relationship anchor regression setup failed')
       const {
         type: _type,
@@ -657,8 +615,8 @@ describe('publication source adapter conformance', () => {
       return publicationGraphSchema.parse(graph)
     }
 
-    const left = graphWithFootnote('anchor-left')
-    const right = graphWithFootnote('anchor-right')
+    const left = graphWithFootnote('relationship-left')
+    const right = graphWithFootnote('relationship-right')
     const relationshipId = (graph: typeof left) => {
       const paragraph = graph.nodes.find((node) => node.type === 'paragraph')
       return paragraph?.type === 'paragraph'
@@ -673,31 +631,39 @@ describe('publication source adapter conformance', () => {
   })
 
   it('canonicalizes content-addressed asset semantics but excludes source filenames', async () => {
-    const payloadWithFileName = (fileName: string) =>
-      adaptPayloadLexical({
-        id: 'asset-semantics',
-        title: 'Asset semantics',
-        content: {
-          root: {
-            children: [{ type: 'upload', value: 'diagram' }],
-          },
-        },
-        uploads: [
+    const bytes = new Uint8Array([1, 2, 3, 4])
+    const sourceWithFileName = (fileName: string) => {
+      const descriptor: AssetDescriptor = {
+        id: 'asset-diagram',
+        sha256: createHash('sha256').update(bytes).digest('hex'),
+        byteLength: bytes.byteLength,
+        mediaType: 'image/png',
+        fileName,
+        accessibilityLabel: 'Semantic diagram',
+        width: 16,
+        height: 12,
+        focalPoint: { x: 0.25, y: 0.75 },
+        crop: { x: 1, y: 2, width: 10, height: 8, unit: 'px' },
+      }
+      return fixtureSourceResult(
+        fixtureGraph([
           {
-            id: 'diagram',
-            fileName,
-            mediaType: 'image/png',
-            width: 16,
-            height: 12,
-            focalPoint: { x: 0.25, y: 0.75 },
-            crop: { x: 1, y: 2, width: 10, height: 8, unit: 'px' },
-            alt: 'Semantic diagram',
-            data: 'AQIDBA==',
+            id: 'figure',
+            type: 'figure',
+            title: 'Semantic diagram',
+            assetIds: [descriptor.id],
+            accessibility: {
+              alternativeText: 'Semantic diagram',
+              decorative: false,
+            },
           },
-        ],
-      })
-    const original = payloadWithFileName('diagram-original.png')
-    const renamed = payloadWithFileName('diagram-renamed.png')
+        ]),
+        [descriptor],
+        () => bytes,
+      )
+    }
+    const original = sourceWithFileName('diagram-original.png')
+    const renamed = sourceWithFileName('diagram-renamed.png')
     const originalDescriptor = original.assetBundle.descriptor.assets[0]!
     const withDescriptor = (
       descriptor: typeof originalDescriptor,
@@ -761,34 +727,45 @@ describe('publication source adapter conformance', () => {
   })
 
   it('remaps reordered source asset ids and delegates canonical byte resolution', async () => {
-    const source = adaptPayloadLexical({
-      id: 'asset-order',
-      title: 'Asset order',
-      content: {
-        root: {
-          children: [
-            { type: 'upload', value: 'first' },
-            { type: 'upload', value: 'second' },
-          ],
-        },
-      },
-      uploads: [
+    const firstBytes = new Uint8Array([1])
+    const secondBytes = new Uint8Array([2])
+    const firstDescriptor: AssetDescriptor = {
+      id: 'asset-first',
+      sha256: createHash('sha256').update(firstBytes).digest('hex'),
+      byteLength: firstBytes.byteLength,
+      mediaType: 'image/png',
+      fileName: 'first.png',
+      accessibilityLabel: 'First',
+    }
+    const secondDescriptor: AssetDescriptor = {
+      id: 'asset-second',
+      sha256: createHash('sha256').update(secondBytes).digest('hex'),
+      byteLength: secondBytes.byteLength,
+      mediaType: 'image/png',
+      fileName: 'second.png',
+      accessibilityLabel: 'Second',
+    }
+    const source = fixtureSourceResult(
+      fixtureGraph([
         {
-          id: 'first',
-          fileName: 'first.png',
-          mediaType: 'image/png',
-          alt: 'First',
-          data: 'AQ==',
+          id: 'figure-first',
+          type: 'figure',
+          title: 'First',
+          assetIds: [firstDescriptor.id],
+          accessibility: { alternativeText: 'First', decorative: false },
         },
         {
-          id: 'second',
-          fileName: 'second.png',
-          mediaType: 'image/png',
-          alt: 'Second',
-          data: 'Ag==',
+          id: 'figure-second',
+          type: 'figure',
+          title: 'Second',
+          assetIds: [secondDescriptor.id],
+          accessibility: { alternativeText: 'Second', decorative: false },
         },
-      ],
-    })
+      ]),
+      [firstDescriptor, secondDescriptor],
+      (descriptor) =>
+        descriptor.sha256 === firstDescriptor.sha256 ? firstBytes : secondBytes,
+    )
     const originalAssets = source.assetBundle.descriptor.assets
     const renamedAssets = originalAssets.map((asset, index) => ({
       ...asset,
@@ -846,41 +823,82 @@ describe('publication source adapter conformance', () => {
   })
 
   it('walks nested lists and captions by ownership instead of flat storage order', () => {
-    const adapted = adaptPayloadLexical({
-      id: 'structural-ownership',
-      title: 'Structural ownership',
-      content: {
-        root: {
-          children: [
-            {
-              type: 'list',
-              id: 'outer-list',
-              children: [
-                {
-                  type: 'listitem',
-                  id: 'outer-item',
-                  children: [
-                    { type: 'text', text: 'Outer item' },
-                    {
-                      type: 'list',
-                      id: 'inner-list',
-                      children: [
-                        {
-                          type: 'listitem',
-                          id: 'inner-item',
-                          children: [{ type: 'text', text: 'Inner item' }],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-            { type: 'upload', id: 'figure', title: 'Missing figure' },
-          ],
+    const adapted = fixtureGraph([
+      {
+        id: 'outer-list',
+        type: 'list',
+        ordered: false,
+        itemIds: ['outer-item'],
+        provenance: {
+          adapterId: FIXTURE_ADAPTER_ID,
+          sourceId: FIXTURE_SOURCE_ID,
+          sourceRevision: '1',
+          evidence: ['conformance:fixture:outer-list'],
+          idOrigin: 'source',
         },
       },
-    }).graph
+      {
+        id: 'outer-item',
+        type: 'list-item',
+        parentListId: 'outer-list',
+        childListIds: ['inner-list'],
+        text: 'Outer item',
+        inlineRuns: [],
+        provenance: {
+          adapterId: FIXTURE_ADAPTER_ID,
+          sourceId: FIXTURE_SOURCE_ID,
+          sourceRevision: '1',
+          evidence: ['conformance:fixture:outer-item'],
+          idOrigin: 'source',
+        },
+      },
+      {
+        id: 'inner-list',
+        type: 'list',
+        ordered: false,
+        itemIds: ['inner-item'],
+        provenance: {
+          adapterId: FIXTURE_ADAPTER_ID,
+          sourceId: FIXTURE_SOURCE_ID,
+          sourceRevision: '1',
+          evidence: ['conformance:fixture:inner-list'],
+          idOrigin: 'source',
+        },
+      },
+      {
+        id: 'inner-item',
+        type: 'list-item',
+        parentListId: 'inner-list',
+        childListIds: [],
+        text: 'Inner item',
+        inlineRuns: [],
+        provenance: {
+          adapterId: FIXTURE_ADAPTER_ID,
+          sourceId: FIXTURE_SOURCE_ID,
+          sourceRevision: '1',
+          evidence: ['conformance:fixture:inner-item'],
+          idOrigin: 'source',
+        },
+      },
+      {
+        id: 'figure',
+        type: 'figure',
+        title: 'Missing figure',
+        assetIds: [],
+        sourceText: 'Missing local asset: Missing figure',
+        accessibility: {
+          alternativeText: 'Missing figure',
+          decorative: false,
+        },
+        provenance: {
+          adapterId: FIXTURE_ADAPTER_ID,
+          sourceId: FIXTURE_SOURCE_ID,
+          sourceRevision: '1',
+          evidence: ['conformance:fixture:figure'],
+          idOrigin: 'source',
+        },
+      },
+    ])
     const figureIndex = adapted.nodes.findIndex((node) => node.id === 'figure')
     const figure = adapted.nodes[figureIndex]!
     if (figure.type !== 'figure')
@@ -938,48 +956,39 @@ describe('publication source adapter conformance', () => {
   })
 
   it('normalizes table cell anchors and their header relationships', () => {
-    const left = adaptPayloadLexical(
+    const left = fixtureGraph([
       {
-        id: 'table-anchors',
-        title: 'Table anchors',
-        content: {
-          root: {
-            children: [
+        id: 'paragraph',
+        type: 'paragraph',
+        text: 'Jump to header',
+        inlineRuns: [{ start: 0, end: 14, href: '#left-header' }],
+      },
+      {
+        id: 'table',
+        type: 'table',
+        rows: [
+          {
+            cells: [
               {
-                type: 'paragraph',
-                children: [
-                  {
-                    type: 'link',
-                    url: '#left-header',
-                    children: [{ type: 'text', text: 'Jump to header' }],
-                  },
-                ],
+                id: 'left-header',
+                text: 'Header',
+                headerScope: 'column',
+                columnSpan: 1,
+                rowSpan: 1,
               },
               {
-                type: 'table',
-                rows: [
-                  {
-                    cells: [
-                      {
-                        id: 'left-header',
-                        text: 'Header',
-                        headerScope: 'column',
-                      },
-                      {
-                        id: 'left-cell',
-                        text: 'Value',
-                        headerIds: ['left-header'],
-                      },
-                    ],
-                  },
-                ],
+                id: 'left-cell',
+                text: 'Value',
+                headerScope: null,
+                columnSpan: 1,
+                rowSpan: 1,
+                headerIds: ['left-header'],
               },
             ],
           },
-        },
+        ],
       },
-      { blocks: { table: 'table' } },
-    ).graph
+    ])
     const right = structuredClone(left)
     const table = right.nodes.find((node) => node.type === 'table')
     if (table?.type !== 'table')
@@ -1001,6 +1010,16 @@ describe('publication source adapter conformance', () => {
   it('allows only source provenance and source hashes to differ in output receipts', () => {
     const shared = {
       version: '1.0.0',
+      sourceBinding: {
+        kind: 'struct-cutover',
+        documentSha256: '9'.repeat(64),
+        semanticReceiptSha256: '7'.repeat(64),
+        packageSourceCommit: 'c'.repeat(40),
+        packageArtifact: 'struct-0.0.0.tgz',
+        packageArtifactSha256: '8'.repeat(64),
+        packageIntegrity: 'sha512-digest',
+        packageVersion: '0.0.0',
+      },
       profiles: { 'phone-webpub': { dimensions: '390px x continuous' } },
       policyVersions: {
         renderer: '1.0.0',
@@ -1034,36 +1053,35 @@ describe('publication source adapter conformance', () => {
         routeParity: 'not-applicable',
       },
     }
-    const payload = {
+    const struct = {
       ...shared,
       source: {
         ...astro.source,
-        adapterId: 'payload-lexical',
-        sourceType: 'payload',
-        sourceId: 'payload:equivalent:en',
+        adapterId: 'struct-document',
+        sourceType: 'research-paper',
+        sourceId: 'struct:equivalent',
         graphSha256: 'f'.repeat(64),
         assetBundleSha256: '0'.repeat(64),
-        mappingVersion: '1.0.0',
       },
     }
-    expect(comparePublicationOutputReceipts(astro, payload)).toBe(true)
+    expect(comparePublicationOutputReceipts(astro, struct)).toBe(true)
     expect(comparePublicationOutputReceipts(astro, {
-      ...payload,
-      policyVersions: { ...payload.policyVersions, publicationCheck: '2.0.0' },
+      ...struct,
+      policyVersions: { ...struct.policyVersions, publicationCheck: '2.0.0' },
     })).toBe(false)
     expect(comparePublicationOutputReceipts(astro, {
-      ...payload,
-      artifacts: [{ ...payload.artifacts[0], sha256: '1'.repeat(64) }],
+      ...struct,
+      artifacts: [{ ...struct.artifacts[0], sha256: '1'.repeat(64) }],
     })).toBe(false)
     expect(() =>
       comparePublicationOutputReceipts(astro, {
-        ...payload,
-        source: { ...payload.source, ignoredPolicyBypass: true },
+        ...struct,
+        source: { ...struct.source, ignoredPolicyBypass: true },
       }),
     ).toThrow(/unsupported source receipt key.*ignoredPolicyBypass/)
     expect(() =>
       comparePublicationOutputReceipts(astro, {
-        ...payload,
+        ...struct,
         unexpectedOutputPolicy: 'changed',
       }),
     ).toThrow(/unsupported output receipt key.*unexpectedOutputPolicy/)

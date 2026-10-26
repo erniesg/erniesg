@@ -1,3 +1,5 @@
+> Restack checkpoint (2026-10-25): this is unpublished candidate source ported from verified `974735c6` onto validated demo-only main base `e7080488`. Historical completion/evidence below is NOT a new main merge, live activation or acceptance of this restack. Main-side E02 records remain in the base history (`ec97271b`); dated E03/E04 records are retained. New exact-head validation/review is pending.
+
 # PublicationGraph authority inventory (E-04 / E-07 evidence)
 
 ## Status
@@ -13,15 +15,15 @@ E-04/E-07 gate is satisfied or that any proposed gate is implemented. Where
 this document describes an assertion that does not yet exist in the
 repository, it says so explicitly.
 
+**UPDATE (E-04, 2026-10-20):** the "E-04 outcome" section above records the
+measured post-E-04 state on the integrated candidate head, with a
+compiler-proven importer set. The rest of this document still describes the
+PRE-E-04 baseline, which is kept as the evidence the plan was written
+against; the E-04 gate status is in
+[`docs/struct-migration-status/e-04-dated-record-20261020.md`](struct-migration-status/e-04-dated-record-20261020.md).
+
 No source file was modified while producing it. No build, test, renderer,
 golden, or receipt run was executed.
-
-Since that inventorying, this document has been **edited** by the documentation
-commits carried on this branch (the §8e production-path facts and the §9 gate
-rows). Those edits change no source, test, fixture, golden, receipt, or
-runtime behaviour, and no build, test, renderer, golden, or receipt run was
-executed for them. The inventory remains grep-bounded evidence, and no gate row
-in §9 is satisfied by the existence of this document.
 
 This document is **evidence input for the cutover plan, not a decision**. It
 is linked reciprocally with
@@ -34,6 +36,55 @@ The plan requires the *existence and scope* of this document; it does not treat
 this document as gate satisfaction, and it records the same grep-bounded
 limitation described below. The gate table in §9 below is the source of the
 plan's pending-gate list; every row of it is still **PENDING**.
+
+## E-04 outcome (measured on the integrated candidate)
+
+**This section supersedes the grep-bounded importer tables in §3 for the post-E-04
+state.** The tables in §3 record the PRE-E-04 baseline that the inventory observed; they
+are kept as the historical evidence the plan was written against. The set below is
+COMPILER-PROVEN (TypeScript checker, alias-resolving) at the integrated E-04 candidate
+head `296e8759` on `feat/struct-e04-candidate-20261020`, using the same analysis the
+checked-in guard `tests/publication-graph-boundary.test.ts` runs.
+
+**The complete set of production modules that can name a graph symbol is now SEVEN:**
+
+| # | Module | What it may name | Why |
+|---|---|---|---|
+| 1 | `src/publication/schema.ts` | the definitions | the definition module |
+| 2 | `src/publication/struct-adapter.ts` | `PUBLICATION_GRAPH_VERSION`, `PublicationInlineRun`, `PublicationNode`, `publicationGraphSchema` | the ONE projection: `StructDocument` -> the ephemeral renderer plan |
+| 3 | `src/publication/source-adapter.ts` | the graph contract symbols | the adapter contract and the contract receipt |
+| 4 | `src/publication/renderers/vivliostyle.ts` | `PublicationGraph`, `PublicationInlineRun`, `PublicationNode`, `serializePublicationGraph` | the renderer consumes the ephemeral plan |
+| 5 | `src/publication/adapter-conformance.ts` | the graph symbols | the canonical-subset comparison |
+| 6 | `src/publication/research-paper-adapter.ts` | the forward direction only | the read-only legacy compatibility bridge; the reverse writer is retired |
+| 7 | `src/publication/publishing-facade.ts` | all of the above | the ONLY module the CLI talks to; it owns the projection internally and exports no graph symbol |
+
+**Everything that used to name the graph outside that set no longer does:**
+
+| Former importer | Post-E-04 state |
+|---|---|
+| `src/publication/adapters/astro.ts` | the adapter produces the one approved Struct revision through the app-owned MDX ingress (`src/struct-adapters/from-markdown.ts`) and projects it; it names no graph symbol |
+| `src/publication/adapters/payload-lexical.ts` | **RETIRED** (the Payload publication path was retired; there is no payload dependency, no site and no production caller) |
+| `src/annotations/annotation-bundle.ts` | the bundle is v1.2.0 with a required `sourceId` and a forbidden `graphId`; anchors resolve from Struct block ids and text, and the legacy 1.0.0/1.1.0 bundles resolve through a read-only map |
+| `tools/publication-build.mjs` | the CLI consumes the app-owned publishing facade; it imports no graph symbol |
+| `tools/publication-check.mjs` | the CLI consumes the app-owned publishing facade; it imports no graph symbol and FAILS if `publication-graph.json` is present in its input directory |
+
+**The persistence, receipt and reverse-writer facts after E-04:**
+
+- `publication-graph.json` is written by nobody and read by nobody; the persisted semantic
+  artifacts are `struct-document.json`, `struct-bundle.json` and the Struct-bound
+  `publication-receipt.json`.
+- The receipt's source identity is the discriminated `sourceBinding`
+  (`struct-cutover` with the actual document/bundle/receipt digests and the exact package
+  pin from the one provenance source, or `legacy-research-paper` with no Struct binding);
+  `graphSha256` and `assetBundleSha256` remain diagnostic back-compat fields.
+- `publicationGraphToResearchPaper` (the reverse writer) is deleted; a red-first
+  assertion proves the module exports no reverse writer, and the round-trip assertion
+  that pinned it was replaced by a forward-invariance assertion, not deleted.
+
+The checked-in guard `tests/publication-graph-boundary.test.ts` enforces this set, with
+the four non-vacuity proofs (the permitted set is exercised, the forbidden classes are
+live, a synthetic barrel probe is flagged, and a synthetic renamed-import probe is
+flagged).
 
 ## Authority and baseline
 
@@ -163,7 +214,7 @@ re-derivable from an arbitrary source without the projection logic.
 | `src/publication/adapters/astro.ts` | 611 | source adapter — `adaptAstroBlogEntry`, `astroPublicationAdapter` | yes (`:14`) | Astro blog entries → graph |
 | `src/publication/adapters/payload-lexical.ts` | 1745 | source adapter — `adaptPayloadLexical`, `adaptPayloadLexicalEditions`, `payloadMappingPolicySchema` | yes (`:3`) | Payload JSON → graph |
 | `src/publication/renderers/vivliostyle.ts` | 1208 | **render** — `publicationGraphToHtml` (`:508`), `createPublicationEpub` (`:793`), `publicationEpubAccessibilityMetadata` (`:724`), `publicationEpubTocHeadings` (`:678`), `renderEpubToc` (`:687`), `publicationEpubNavigationLabels` (`:711`), `publicationAssetFileExtension` (`:569`), `vivliostyleRenderer` (`:1081`), `PublicationReceipt` (`:109`) | yes (`:28-32`) | the only renderer of a graph |
-| `src/publication/adapter-conformance.ts` | 544 | **conformance** — `canonicalPublicationSubset` (`:364`), `serializeCanonicalPublicationSubset` (`:368`), `canonicalPublicationSubsetSha256` (`:372`), `comparePublicationSemanticSubset` (`:376`), `canonicalPublicationGraph` (`:385`), `canonicalPublicationSourceResult` (`:401`), `publicationOutputReceiptContract` (`:444`), `comparePublicationOutputReceipts` (`:528`), `sourceReceiptHashes` (`:535`), `PUBLICATION_CONFORMANCE_VERSION` (`:6`) | yes (`:2`) | semantic-subset hashing, conformance-only receipt contract (not called by the release check) |
+| `src/publication/adapter-conformance.ts` | 544 | **conformance** — `canonicalPublicationSubset` (`:364`), `serializeCanonicalPublicationSubset` (`:368`), `canonicalPublicationSubsetSha256` (`:372`), `comparePublicationSemanticSubset` (`:376`), `canonicalPublicationGraph` (`:385`), `canonicalPublicationSourceResult` (`:401`), `publicationOutputReceiptContract` (`:444`), `comparePublicationOutputReceipts` (`:528`), `sourceReceiptHashes` (`:535`), `PUBLICATION_CONFORMANCE_VERSION` (`:6`) | yes (`:2`) | semantic-subset hashing, receipt contract |
 | `src/publication/profiles.ts` | 289 | composition context — `COMPOSITION_CONTEXT_VERSION = '1.0.0'` (`:12`), `compositionContextSchema` (`:22`), `targetProfileToCompositionContext` (`:190`), `compositionContextToTargetProfile` (`:257`) | no | coupled to `src/research/targets.ts` `TARGET_PROFILE_IDS` (`:10`) |
 | `src/publication/transformation-policy.ts` | 144 | `TRANSFORMATION_POLICY_VERSION = '1.0.0'` (`:3`), `transformationPolicySchema` (`:107`), `parseTransformationPolicy` (`:136`), `serializeTransformationPolicy` (`:142`) | no | — |
 | `src/publication/output-contract.ts` | 11 | `PUBLICATION_CHECK_VERSION = '1.0.0'` (`:3`), `PUBLICATION_OUTPUT_POLICY_VERSIONS` (`:5-11`) | no | renderer policy versions |
@@ -263,7 +314,7 @@ The exported parser is currently dead surface.
 
 | Artifact | Location | Writer | Content |
 |---|---|---|---|
-| `publication-graph.json` | `src/publication/renderers/vivliostyle.ts:1107-1111` | `vivliostyleRenderer.render` (`:1083-1207`), `writeFile(..., EXCLUSIVE_WRITE)` | `JSON.stringify(bundle.graph, null, 2)` |
+| `publication-graph.json` | `src/publication/renderers/vivliostyle.ts:1107-1111` | `vivliostyleRenderer.render` (`:1081`), `writeFile(..., EXCLUSIVE_WRITE)` | `JSON.stringify(bundle.graph, null, 2)` |
 | `asset-bundle.json` | `src/publication/renderers/vivliostyle.ts:1112-1116` | same | asset descriptor |
 | `publication-receipt.json` | `src/publication/renderers/vivliostyle.ts:1201-1205` | same | `PublicationReceipt` (see §6) |
 | `astro-route-parity.json` | `tools/publication-build.mjs:990-1019` | CLI | route parity + `graphSha256` |
@@ -279,7 +330,7 @@ and published by atomic rename.
 
 | Writer | Location | Adapter used | Notes |
 |---|---|---|---|
-| `tools/publication-build.mjs` (`npm run publication:build`) | `parsePublicationBuildArgs` (`:31-69`); registry at `:1053`; `registry.resolve(options.adapter, locator)` at `:1067`; output at `:1052`, receipt re-stamped at `:1023-1043` | `astro` and `payload-lexical` only — `--adapter` accepts only `astro`/`payload`→`payload-lexical` (`:54-67`; any other adapter is rejected at `:65-67`) | `createDefaultPublicationAdapterRegistry()` also registers `struct`, but **the CLI cannot select it** — the option parser rejects any other adapter id |
+| `tools/publication-build.mjs` (`npm run publication:build`) | `parsePublicationBuildArgs` (`:31-69`); registry at `:1053`; `registry.resolve(options.adapter, locator)` at `:1067`; output at `:1052`, receipt re-stamped at `:1023-1043` | `astro` and `payload-lexical` only — `--adapter` accepts only `astro`/`payload`→`payload-lexical` (`:54-67`) | `createDefaultPublicationAdapterRegistry()` also registers `struct`, but **the CLI cannot select it** — the option parser rejects any other adapter id |
 | `src/publication/renderers/vivliostyle.ts` (`vivliostyleRenderer`) | `:1081-1207` | receives an already-resolved `PublicationBundle` | writes graph + assets + artifacts + receipt |
 | `npm run publication:check` (`tools/publication-check.mjs`) | `:1144-1162`, `:1354` | re-parses the emitted `publication-graph.json` | compares `receipt.source?.graphSha256` to `sha256(serializePublicationGraph(graph))` |
 | `npm run build:production` | `package.json` `build:production` | `--adapter astro --entry moving-to-cloudflare-with-astro` → `.agent/evidence/publication` | the only wired production build path for the graph pipeline |
@@ -455,28 +506,10 @@ What *is* present instead is a **graph digest as the sole source identity**:
 `PublicationReceipt.source.graphSha256` (`:111`) and
 `PublicationContractReceipt.graphSha256` (`:28`).
 
-### 6d. The shared output-receipt contract (conformance comparison only — **not** the CLI admission path)
+### 6d. The shared output-receipt contract (used by the CLI tools)
 
 `publicationOutputReceiptContract` (`src/publication/adapter-conformance.ts:444-526`)
-is the **closed allowlist** used by `comparePublicationOutputReceipts`
-(`:528-533`). Its only callers are
-`tools/publication-adapter-conformance.mjs:131` and
-`src/publication/adapter-conformance.test.ts:1049-1065`. **No release-path CLI
-tool calls it:** neither `tools/publication-build.mjs` nor
-`tools/publication-check.mjs` imports or invokes it.
-
-The **actual release admission path** is `publicationCheck`
-(`tools/publication-check.mjs:1138-1200`), which parses `publication-receipt.json`
-(`:1147-1148`) and validates selected fields directly:
-`assertPublicationReceiptPolicyVersions` (`:238-249`, called `:1149`), the
-graph/asset/canonical-subset digest asserts (`:1161-1177`),
-`assertPublicationReceiptSourceBinding` (`:265-290`, called `:1178`), the
-source-provenance assert (`:1179-1183`), `assertPublicationReceiptMappingVersion`
-(`:251-263`, called `:1184`), `assertPublicationReceiptRepositoryBinding`
-(`:1185-1193`), `assertPublicationReceiptRuntime` (`:196-236`, called
-`:1194-1197`), and the four-artifact matrix check (`:1198-1201`).
-
-What the conformance allowlist itself enforces, when it is called:
+is the **closed allowlist** that the CLI build/check path enforces:
 
 - top-level allowed keys (`:447-455`): `version`, `source`, `profiles`,
   `policyVersions`, `toolchain`, `repository`, `artifacts` — anything else
@@ -492,17 +525,10 @@ What the conformance allowlist itself enforces, when it is called:
   `canonicalSubsetSha256` — again **no Struct digest**.
 
 **Concrete consequence:** adding a Struct digest or a Struct package pin to a
-receipt is *not* rejected by the release check — `publicationCheck` never
-inspects unknown keys — but it is also **not required** by it: a receipt with
-no Struct binding at all still passes `publication:check`. The conformance
-allowlist would reject the extra keys in the adapter-conformance comparison
-(`:456-462`, `:476-483`), so it must be widened deliberately for that tool.
-Widening it alone changes nothing in the release path: requiring the
-`struct-cutover` variant means adding an assertion to
-`tools/publication-check.mjs` (for example inside
-`assertPublicationReceiptSourceBinding`, called at `:1178`) and comparing the
-mandatory `semanticReceiptSha256` with
-`structReceiptDigest(decodedDocument)`.
+receipt today would be *rejected* by `publicationOutputReceiptContract` as an
+"unsupported output receipt key" (`:456-462`, `:476-483`). Any future change
+that binds receipts to Struct must widen this allowlist **deliberately** —
+it cannot be added additively without touching this function.
 
 ### 6e. Current callers of the two receipt factories
 
@@ -510,7 +536,7 @@ mandatory `semanticReceiptSha256` with
 |---|---|
 | `createPublicationContractReceipt` | `src/publication/source-adapter.test.ts:11,87,88,103`; `src/publication/adapter-conformance.test.ts:34,94,95` — **tests only** |
 | `PublicationReceipt` construction | `src/publication/renderers/vivliostyle.ts:1189` (production renderer) |
-| `publicationOutputReceiptContract` | definition only: `src/publication/adapter-conformance.ts:444`; used through `comparePublicationOutputReceipts` (`:530-531`) by `tools/publication-adapter-conformance.mjs:131` and `src/publication/adapter-conformance.test.ts:1049-1065`. **No caller in `tools/publication-build.mjs` or `tools/publication-check.mjs`.** |
+| `publicationOutputReceiptContract` | `tools/publication-check.mjs` (via the CLI check path); `src/publication/adapter-conformance.test.ts` |
 
 ## 7. Graph-based annotation anchors
 
@@ -539,14 +565,6 @@ graph node text. The ResearchPaper is the anchor authority on the other side
 (`src/annotations/annotation-bundle.test.ts:40,42,65,74,92,106,141,171,196,224,271,327,357,385`;
 `src/annotations/move-parity.test.ts:76`). No route, worker, or storage path
 consumes an annotation bundle today.
-
-**Target disposition (plan §E-04):** `src/annotations/annotation-bundle.ts` is
-**not** in the cutover plan's target permitted `PublicationGraph` importer set.
-It must migrate anchor/node-id authority to Struct document nodes (or the
-competing graph must be retired) before E-04 can exit, and it must not be added
-to an allowlist. Its type-only import (`:13`) does not make it graph-free: the
-module resolves anchors against `graph.nodes` (`:76-128`) and persists
-`graphId` (`:24`, `:135`).
 
 **The two anchor models therefore disagree about what an anchor is anchored
 to**, and the only place they are reconciled is
@@ -616,7 +634,7 @@ as an implementation claim):
 | R9 | reverse writer | `publicationGraphToResearchPaper` converts graph nodes/text/ids back into a ResearchPaper, and a test asserts the round trip | `src/publication/research-paper-adapter.ts:198-296`; `src/publication/research-paper-adapter.test.ts:17` |
 | R10 | graph-anchored annotation authority | `createAnnotationBundle` anchors annotations to graph node ids and graph node text; only `graphId` is persisted, but the anchor semantics are graph-owned | `src/annotations/annotation-bundle.ts:13,24,65-140` |
 | R11 | no Struct digest / package pin in receipts | neither receipt shape carries a Struct package pin, artifact digest, `document` digest, or `receipt` digest | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61` |
-| R12 | receipt admission ignores Struct bindings | the conformance allowlist rejects unknown receipt/source keys (adapter-conformance tool only), while the release check `publicationCheck` validates selected fields and neither rejects nor requires a Struct binding | `src/publication/adapter-conformance.ts:456-462`, `:476-483`; `tools/publication-check.mjs:1149-1197` |
+| R12 | receipt allowlist blocks Struct bindings | `publicationOutputReceiptContract` rejects unknown receipt/source keys, so Struct bindings cannot be added additively | `src/publication/adapter-conformance.ts:456-462`, `:476-483` |
 
 **Counter-facts that must not be overstated** (things that are *not* red):
 
@@ -662,8 +680,7 @@ exact package pin/version; graph-only digests are diagnostic only."*
   `:1192`) and in `PublicationContractReceipt`
   (`src/publication/source-adapter.ts:28`, `:155`).
 - `canonicalSubsetSha256` is **required** by the shared output-receipt
-  contract (`src/publication/adapter-conformance.ts:489`, `:494`) — which the
-  release check does not call — and the
+  contract (`src/publication/adapter-conformance.ts:489`, `:494`), and the
   CLI check compares `receipt.source?.graphSha256` to a freshly computed
   `sha256(serializePublicationGraph(graph))` (`tools/publication-check.mjs:1162`).
 - **No Struct digest and no Struct package pin exist in any receipt.** There
@@ -678,316 +695,8 @@ exact package pin/version; graph-only digests are diagnostic only."*
 > produce graphs and are the two the CLI can actually select; (2) no
 > byte-identical double-adapt conformance test for a pinned `StructDocument`
 > was found; (3) the red-first static assertion does **not** exist (see §9);
-> (4) receipt Struct bindings do **not** exist, the conformance receipt
-> allowlist would reject them, and the release check does not require them.
-
-### 8e. Production-path facts the E-04 ingress work must respect
-
-These are **observed today** (grep-bounded, not compiler-proven). They are the
-current-state facts behind the gate rows that name the Astro ingress (G-17),
-the Payload ingress (G-01, G-16, G-18), the receipt-bound Struct bundle
-(G-10) and the asset binding between the decoded bundle and the shipped
-assets - the asset **media metadata** and the **real per-copy paths** included
-(G-10). The corresponding normative obligations are in the cutover
-plan's §"The Struct bundle must survive the adapter result", §"The rendered
-assets must be bound to the decoded Struct bundle", §"Production source
-path: Astro to the pinned Struct revision" and §"Production source path:
-Payload to the pinned Struct revision".
-
-**8e.1 The Struct projection stamps its own source identity, and the release
-admission check reads the identity from the receipt, not from the CLI flag.**
-
-- `adaptStructDocument` (`src/publication/struct-adapter.ts:188`) sets the
-  result provenance's `adapterId` to `STRUCT_PUBLICATION_ADAPTER_ID`
-  (`'struct-document'`, `src/publication/struct-adapter.ts:24`) at
-  `src/publication/struct-adapter.ts:1290`, and sets every node's provenance
-  `adapterId` to the same constant at `src/publication/struct-adapter.ts:660`.
-- The result provenance's `sourceType` comes from `sourceType(document)`
-  (`src/publication/struct-adapter.ts:1292`), and `sourceType`
-  (`src/publication/struct-adapter.ts:175-181`) returns `'pdf'` for a `'pdf'`
-  source, `'docx'` for a `'docx'` source, and `'research-paper'` for every
-  other format. `StructSourceFormat` is
-  `'pdf' | 'docx' | 'html' | 'image' | 'unknown'`
-  (`src/struct/types.ts:17`), so an HTML-format source is `'research-paper'`.
-- The release receipt's source identity is copied verbatim from the bundle's
-  provenance (`tools/publication-build.mjs:452` `adapterId`, `:454`
-  `sourceType`, `:469` `routeParity`), and its route-parity policy is bound
-  from the **requested** adapter id, not from the bundle: the `astro` branch
-  binds `'astro-canonical-route'` and every other branch binds
-  `'not-applicable'` (`tools/publication-build.mjs:1081-1086`).
-- The release admission check
-  (`publicationReceiptRequiresCanonicalRouteParity`,
-  `tools/publication-check.mjs:61-94`, called from `publicationCheck` at
-  `:1151`) derives `isAstro` from `adapterId === 'astro'` (`:72`), requires
-  `isAstro` to agree with `sourceType === 'astro'` (`:73-74`), and accepts
-  only the `'not-applicable'` policy for a non-Astro receipt (`:92-94`).
-
-**Consequence, stated as a fact about the current code and not as an
-implementation claim:** if the `astro` adapter is re-pointed at
-`adaptStructDocument` without resolving the provenance, the released receipt
-would carry `('struct-document', 'research-paper')` together with the
-`'astro-canonical-route'` policy, and `tools/publication-check.mjs:92-94`
-would throw `Non-Astro publication receipt has no recognized route-parity
-policy`. `npm run build:production` runs `publication:check` on that receipt
-(`package.json` `build:production`). The same identity question does **not**
-block the Payload case: the Payload branch binds `'not-applicable'`, which
-`tools/publication-check.mjs:92-94` accepts for a non-Astro receipt.
-
-**8e.2 The `payload-lexical` adapter is a direct graph producer; there is no
-Payload-to-Struct conversion.**
-
-- `src/publication/adapters/payload-lexical.ts` builds the `PublicationGraph`
-  itself with `publicationGraphSchema.parse({...})` at
-  `src/publication/adapters/payload-lexical.ts:1646` (inside `buildResult`,
-  which starts at `src/publication/adapters/payload-lexical.ts:1579`) and
-  re-parses the graph for the edition variants at
-  `src/publication/adapters/payload-lexical.ts:1726` (inside
-  `adaptPayloadLexicalEditions`, which starts at
-  `src/publication/adapters/payload-lexical.ts:1701`).
-- It imports no `StructDocument` and never calls `adaptStructDocument`
-  (`src/publication/struct-adapter.ts:188`). The only callers of
-  `adaptStructDocument` at this head are the `struct` registry entry
-  (`src/publication/struct-adapter.ts:1313-1318`) and
-  `src/publication/struct-adapter.test.ts`.
-- The adapter's own provenance is `adapterId: 'payload-lexical'`,
-  `sourceType: 'payload'` (`src/publication/adapters/payload-lexical.ts:1662-1664`),
-  and its mapping policy is `parseMapping` / `parsePayloadMappingPolicy`
-  (`src/publication/adapters/payload-lexical.ts:139`, `:1745`).
-
-**Consequence:** redirecting `payload-lexical` onto the Struct projection has
-no `StructDocument` to supply. The `payload-lexical` adapter is also a
-**selectable production CLI case** (`tools/publication-build.mjs:54-67`), and
-the frozen production case set requires that case (G-16), so removing the
-adapter is not an available substitute. A Payload-to-pinned-Struct ingress is
-a prerequisite for that redirect, not a consequence of it.
-
-**8e.3 The Struct projection stamps its own identity on every node, and the
-release admission check binds every node to the receipt's source identity.**
-
-- `adaptStructDocument` (`src/publication/struct-adapter.ts:188`) sets every
-  node's `provenance.adapterId` to `STRUCT_PUBLICATION_ADAPTER_ID`
-  (`'struct-document'`, `src/publication/struct-adapter.ts:24`) at
-  `src/publication/struct-adapter.ts:660`, and every node's
-  `provenance.sourceId` is the Struct document's own source id
-  (`sourceIdFor`, `src/publication/struct-adapter.ts:133-143`, used at
-  `src/publication/struct-adapter.ts:192`). The node provenance schema is
-  `src/publication/schema.ts:114-122`: it is **strict**, and the fields it
-  accepts are exactly `adapterId` (`:116`), `sourceId` (`:117`),
-  `sourceRevision` (`:118`), `evidence` (`:119`) and `idOrigin` (`:120`).
-  There is **no** node-level `sourceType`; the source type is carried by the
-  result provenance only.
-- The Payload adapter stamps the opposite identity today: per node,
-  `commonNode` (`src/publication/adapters/payload-lexical.ts:819-838`) sets
-  `provenance.adapterId` to `PAYLOAD_LEXICAL_ADAPTER_ID` and
-  `provenance.sourceId` to `state.sourceId`
-  (`src/publication/adapters/payload-lexical.ts:826-832`), and the result
-  provenance is `adapterId: 'payload-lexical'`, `sourceType: 'payload'`
-  (`src/publication/adapters/payload-lexical.ts:1662-1668`).
-- The release admission check requires **per-node** agreement, not only a
-  matching result provenance: `assertPublicationReceiptSourceBinding`
-  (`tools/publication-check.mjs:265`) asserts that every node's
-  `provenance.adapterId` equals the receipt's source adapter
-  (`:274-280`, clause at `:277`), that every node's `provenance.sourceId`
-  equals the receipt's source id (`:281-288`, clause at `:285`), and that
-  every node's `provenance.sourceRevision` equals the receipt's source
-  revision (`:289-294`, clause at `:291`); it is called from
-  `publicationCheck` at `tools/publication-check.mjs:1178`. The receipt's
-  own `sourceType` is compared separately, against the registered adapter
-  (`:267-273`).
-
-**Consequence, stated as a fact about the current code and not as an
-implementation claim:** a `payload-lexical` adapter re-pointed at
-`adaptStructDocument` without carrying or restamping the per-node provenance
-produces nodes whose `adapterId` is `'struct-document'` and whose `sourceId`
-is the Struct document's source id, while the receipt's source identity is the
-Payload one; `assertPublicationReceiptSourceBinding` then fails at
-`tools/publication-check.mjs:274-280` and `:281-288`, so a production
-`--adapter payload` build is **rejected at admission** even though its
-route-parity policy is valid. Restamping only the result provenance does not
-change this, and the Payload path needs the same obligation the Astro path
-already has (G-17). The restamp must use the **node schema's** fields -
-`adapterId`, `sourceId`, `sourceRevision` - and only those: the schema is
-strict, so writing `sourceType` onto a node is rejected by
-`validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`),
-which reparses every node through `provenanceSchema`; `sourceType` stays on
-the result provenance.
-
-**8e.4 The exported multi-locale edition API has no specified replacement.**
-
-- `adaptPayloadLexicalEditions`
-  (`src/publication/adapters/payload-lexical.ts:1701`) builds **every declared
-  locale** as a separate linked edition (the locale collection at `:1702-1711`)
-  and links the locale variants by assigning `edition.equivalentNodeId` for
-  matching source-stable nodes (`:1722`), re-parsing the graph at `:1726`.
-- The graph's node-edition schema still provides the field
-  (`src/publication/schema.ts:166`, with `sourceLocaleKey` at `:167`), and the
-  conformance comparator still reads it
-  (`src/publication/adapter-conformance.ts:276-277`).
-- `adaptStructDocument` never emits `equivalentNodeId`: it is single-locale by
-  construction (`localeFor`, `src/publication/struct-adapter.ts:55`, used at
-  `:229`) and stamps `edition: { editionId }` per node
-  (`src/publication/struct-adapter.ts:668`; the graph-level edition at `:1274`).
-- The exported API's only callers at this head are in
-  `src/publication/adapters/payload-lexical.test.ts` - the import at `:5` and
-  the calls at `:2241`, `:2790`, `:2829`, `:2832`, `:2844`, `:2879`, `:2885`
-  and `:2968`; the linked-edition assertions are at `:2795` and `:2829-2830`.
-  The production Payload path does not use it: `payloadLexicalSourceAdapter.adapt`
-  calls the single-locale `adaptPayloadLexical`
-  (`src/publication/adapters/payload-lexical.ts:1732-1736`), which adapts one
-  locale (`:1673-1698`).
-
-**Consequence:** the exported multi-locale linked-edition contract has **no
-specified replacement** in a Struct redirect. The plan must state a
-disposition - a per-locale Struct projection/linking design with a localized
-parity case, or the explicit retirement of the exported API with its callers
-named - before the `payload-lexical` redirect (G-01) is performed. The
-inventory does not choose between them; it records that the choice is
-required and that the callers are as listed above.
-
-**8e.5 The source result cannot carry the Struct bundle, so the receipt-bound
-`struct-bundle.bin` cannot be produced.**
-
-- `PublicationSourceResult` is a **closed four-field type** - `graph`,
-  `assetBundle`, `diagnostics`, `provenance` -
-  (`src/publication/source-adapter.ts:129-134`).
-- `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177`)
-  **reconstructs** that closed shape and returns only those four fields
-  (`:207-215`), so anything an adapter put beside them is dropped.
-- `PublicationBundle` is an alias of that type
-  (`src/publication/adapter-registry.ts:10`) and
-  `PublicationAdapterRegistry.resolve` returns exactly the validated value
-  (`src/publication/adapter-registry.ts:30-38`).
-- The renderer is the only component that writes into the render output
-  directory (`src/publication/renderers/vivliostyle.ts:1081-1207`; the
-  artifacts it writes are at `:1107-1116`), and it reads only `bundle.graph`
-  and `bundle.assetBundle.descriptor`. The release check receives only the
-  output directory and reads the graph from it
-  (`tools/publication-check.mjs:1142-1146`).
-
-**Consequence:** the exact encoded bundle produced from the ingress is
-discarded before the only component that can write into the output directory
-runs, so the receipt-bound `struct-bundle.bin` that G-10 requires cannot be
-produced unless the source-result/registry contract is extended to carry the
-canonical document and the verified bundle handle (or the encoded bytes).
-
-**8e.6 The rendered assets are not bound to the decoded Struct bundle, and the
-renderer emits no root `assets/` directory.**
-
-- The renderer never reads the Struct bundle: it reads `bundle.graph` and
-  `bundle.assetBundle.descriptor` (`src/publication/renderers/vivliostyle.ts:553`,
-  `:810`), writes the asset bytes from that descriptor - `writeAssets`
-  (`:546-567`, the per-entry write at `:553-566`, the shipped file name built
-  at `:558` and the href recorded at `:564`) and the EPUB path
-  (`:805-826`) - and persists the descriptor itself as `asset-bundle.json`
-  (`:1112-1115`).
-- The asset descriptor's per-asset identity is `id`, `sha256`, `byteLength`,
-  `mediaType` and `fileName` (`assetDescriptorSchema`,
-  `src/publication/asset-bundle.ts:14-54`; `mediaType` at `:19-23`,
-  `fileName` at `:24-32`, the object `.strict()` at `:54`; the bundle
-  descriptor at `:56-61`), and the app's own resolver verifies the resolved
-  bytes against that descriptor (`:124-134`). The Astro ingress builds that
-  descriptor with the `mediaType` resolved from the file extension
-  (`src/publication/adapters/astro.ts:319-321`, the media-type table at
-  `:65-73`) and `fileName: basename(path)` (`:323-330`, `:328`).
-- The renderer writes **three** copies of one asset and **no** root `assets/`
-  directory: the WebPub copy `phone-webpub/assets/<assetId><extension>`
-  (`createWebPub`, `:610-662`; the WebPub root at `:615`, the asset write at
-  `:617`), the layout copy `layout-assets/<assetId><extension>`
-  (`vivliostyleRenderer.render`, `:1125-1129`), and the archive entry
-  `EPUB/assets/<assetId><extension>` inside `eink.epub` (the entry path built
-  at `:815`, written into the archive at `:817-821`). Every write into the
-  output directory is at `:1107-1116`, `:1121-1139`, `:1149`, `:1155` and
-  `:1201-1205`; the renderer never writes an `assets/` directory at the
-  output root.
-- The release checker reads the persisted descriptor
-  (`tools/publication-check.mjs:1152-1154`), derives the shipped asset paths
-  from it (`:1155-1160`), and compares only **its** digest with the
-  receipt's `assetBundleSha256` (`:1165-1169`). It never sees the Struct
-  bundle's assets. The derived path map is **WebPub-relative**
-  (`assets/<assetId><extension>`) and is used to check the WebPub document's
-  own references (`validateWebPubGraph`, `:833-848`, called at `:1207`).
-  Neither the layout copy nor the archive entries is hashed against an asset
-  digest today: the WebPub receipt-manifest check (`:995-1045`) compares the
-  WebPub files with the receipt's **own** manifest rather than with the
-  decoded Struct bundle's asset digests, and the archive check
-  (`:1213-1232`) reads only `EPUB/package.opf`, `EPUB/nav.xhtml` and
-  `EPUB/content.xhtml`.
-- The Struct-side asset entries are a different shape, and they carry **more
-  than a digest**: the pinned package's `StructDocument.assets` is a
-  `StructAsset[]` whose entries carry `id`, `kind`, **`href`**,
-  **`mediaType`**, `sha256`, `width`, `height`, the optional asset `bytes`,
-  `sourceObjectIds`, `evidence` and `fallback`
-  (`vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz::package/dist/types-J59yEqPh.d.ts:135-147`,
-  the array at `:251`; the app's mirror of the same shape is
-  `src/struct/types.ts:165-177`, `:310`), so the decoded bundle exposes a
-  media type and an href/file-name mapping that admission can compare with
-  the app-side descriptor. The Struct bundle's own asset
-  descriptor is built **from** those entries
-  (`worktrees/app-e04-receipt-admission:src/publication/struct-source-binding.ts:91-113`:
-  the `document.assets` map at `:95`, the asset `sha256` at `:107`, the
-  `mediaType` at `:108`, the `byteLength` at `:109`).
-- The media type is not cosmetic: the shipped file's extension is derived
-  from the media type **alone** - `publicationAssetFileExtension` takes
-  `fileName` and `mediaType` and discards the file name (`void fileName`,
-  `src/publication/renderers/vivliostyle.ts:573`; the canonical media-type
-  map at `:575-587`) - and the EPUB manifest declares the asset with
-  `media-type="${descriptor.mediaType}"` and `href="${file}"`
-  (`:822-824`, the `file` built at `:815`).
-
-**Consequence:** a valid Struct bundle and a different set of image bytes can
-be paired by a projection bug and still produce internally correct bundle and
-asset-bundle receipt hashes, so every digest comparison the checker performs
-can pass while the shipped assets are not from the pinned Struct revision.
-The same holds one step further: byte-identical assets stay unbound while the
-media metadata is unbound, because the shipped extension and the OPF media
-type are derived from the media type, so a wrong `mediaType` yields a
-correctly hashed asset that is declared and referenced incorrectly. And
-because the renderer emits no root `assets/` directory, a checker that
-validated that path would validate a path the renderer never writes: it could
-fail on a nonexistent directory, or validate a newly created duplicate while
-the corrupted WebPub, layout and archive copies still passed.
-G-10 must therefore also require the comparison of the decoded bundle's
-asset identities, digests and byte lengths with the publication asset
-descriptor and with the assets actually shipped **at their real paths**, and
-the comparison of the decoded bundle's `mediaType` and `href` with the
-descriptor's `mediaType` and `fileName` and with the shipped file name; the
-inventory records that obligation and does not choose an implementation for
-it.
-
-**8e.7 The Astro adapter fails closed by throwing, and the diagnostics path
-never rejects - so an unsupported construct must stay release-blocking.**
-
-- The current Astro adapter refuses an unsupported construct by **throwing**:
-  the `unsupported` helper is declared `: never` and throws
-  `Unsupported MDX node ...` (`src/publication/adapters/astro.ts:84-92`), and
-  the MDX walk calls it at `:167`, `:170-171`, `:403`, `:405`, `:423`, `:482`,
-  `:508`, `:510` and `:522`. The existing red-first test pins that refusal:
-  `src/publication/adapters/astro.test.ts:96-107` adapts the fixture
-  `tests/fixtures/publication/astro/unsupported-component.mdx` and expects the
-  adaptation to reject with `Unsupported MDX node ClientOnly
-  (mdxJsxFlowElement) ...`.
-- The **diagnostics** path is the opposite: `validatePublicationSourceResult`
-  (`src/publication/source-adapter.ts:177-216`) parses and **returns** the
-  diagnostics - `z.array(adapterDiagnosticSchema).max(10_000).parse(...)` at
-  `:210-213` - and never rejects one. The diagnostic schema accepts an
-  `error` severity (`adapterDiagnosticSchema`, `:97-109`, the severity enum at
-  `:99`), and an `error` diagnostic still passes through unchanged. The only
-  throws in that function are the missing-asset-reference throw
-  (`:199-205`) and the missing-resolver `TypeError` (`:184-188`).
-- The adapter emits only `info` diagnostics today - the translation-sibling
-  diagnostic at `src/publication/adapters/astro.ts:590-595` - because the
-  unsupported case never reaches the diagnostics at all: it throws first.
-
-**Consequence:** implementing the Astro-to-pinned-Struct ingress as "report
-every construct it cannot express as an adapter diagnostic" would let the
-build continue with that construct **omitted**, because nothing in the
-validation path rejects a returned diagnostic, not even an `error`-severity
-one. The fail-closed behaviour is therefore not preserved by a diagnostic; the
-new ingress must either throw, as the current adapter does, or admission must
-reject the diagnostic, and the existing `unsupported-component.mdx` fixture
-must be covered by a red-first test that proves the publication is refused.
-G-17 carries that obligation; the inventory records it and does not choose an
-implementation for it.
+> (4) receipt Struct bindings do **not** exist and the receipt allowlist
+> would currently reject them.
 
 ## 9. Exact gates that a future E-04 change must satisfy
 
@@ -995,52 +704,25 @@ These are the **required** gates, derived from ADR-0001, the E-04 issue
 acceptance, and the app cutover plan, cross-referenced to the concrete
 artifacts that must change. **None of them is implemented or verified here.**
 Every row is **PENDING**, and the cutover plan's "E-04 future gates" table
-mirrors these rows as pending obligations (EG-01..EG-18 one-to-one with
-G-01..G-18); nothing in this table is a runtime, golden, receipt, or
-activation result. **Drift rule:** this table and the plan's "E-04 future
-gates" table are the same obligation set; any row added, removed, or reworded in
-one must be applied identically to the other in the same change (the same
-change reaches the other table in the same commit), and a row present in only
-one of the two is a defect. The plan's `EG-` prefix and this table's `G-` prefix
-are the only naming difference. Each table states a row in its own wording and
-names its own artifact list, so gate text and artifact lists are not required to
-be byte-identical between the two tables; what must match row for row is the
-`(Fn)` anchor marker set and the pending status (both documents record every row
-as pending). At this head the two tables are one-to-one and in the same order
-(18 rows each), their `(Fn)` anchor marker sets match on all 18 pairs, and every
-row is pending; the `(F19)` asset-binding marker, the `(F20)` media-metadata
-marker and the `(F21)` per-copy marker appear on the G-10 pair here and on the
-EG-10 pair in the plan, and the `(F22)` fail-closed Astro-ingress marker
-appears on the G-17 pair here and on the EG-17 pair in the plan; the two tables
-still word the same obligations differently and name different artifact lists
-for most rows, which is a pre-existing divergence this inventory does not
-claim to have resolved.
-
-The `(Fn)` anchor markers in the gate text below name the review findings
-recorded in the plan's §"Review-finding anchors" register. They are traceability
-markers for the obligation each gate row states; they are **not** gate
-satisfaction and they add no obligation beyond the row text.
+mirrors these rows as pending obligations; nothing in this table is a runtime,
+golden, receipt, or activation result.
 
 | # | Gate (required) | Concrete artifact that must change | Current status |
 |---|---|---|---|
-| G-01 | `PublicationGraph` is narrowed to an ephemeral, mechanically derived renderer plan from **one pinned approved Struct revision** (F4); redirecting the two selectable adapters onto the Struct projection requires the app-owned Astro-to-pinned-Struct ingress **and** the app-owned Payload-to-pinned-Struct ingress to exist, be tested against the pinned artifact, and land **before** the redirects they enable | `src/publication/adapter-registry.ts:55-60` (drop/limit `astro` + `payload-lexical` graph production), `tools/publication-build.mjs:54-67` (`--adapter` allowlist), `src/publication/adapters/astro.ts`, `src/publication/adapters/payload-lexical.ts`, `src/publication/adapters/payload-lexical.ts:1646` (direct `publicationGraphSchema.parse`), `:1726` (edition re-parse) | not done |
-| G-02 | The graph owns **no independent text** (F4) | `src/publication/schema.ts:172-315`, `:372-387` (text-bearing fields), `src/publication/research-paper-adapter.ts:198-296` (reverse text minting) | not done |
-| G-03 | The graph owns **no independent semantic IDs** (F4) | `src/publication/schema.ts:7-11` (own id grammar) — a narrowed plan must derive ids from the pinned Struct revision | not done |
-| G-04 | The graph owns **no persistence** (F4) | delete/disable `src/publication/renderers/vivliostyle.ts:1107-1111`; and the reader at `tools/publication-check.mjs:1145` | not done |
-| G-05 | The graph owns **no receipt** (F4/F8) | `src/publication/renderers/vivliostyle.ts:109-117` + `:1189-1200`; `src/publication/source-adapter.ts:25-61` + `:148-175`; a `struct-cutover` admission assertion in `tools/publication-check.mjs` (the release check never calls the conformance allowlist); and the conformance allowlist in `src/publication/adapter-conformance.ts:447-494` must be widened **deliberately** to accept the Struct bindings | not done |
-| G-06 | The graph owns **no writer** and **no release path** (F3/F4) | `tools/publication-build.mjs` (`package.json` `build:production`); `src/publication/renderers/vivliostyle.ts:1081-1207` | not done |
-| G-07 | No reverse graph→ResearchPaper writer (F4) | `src/publication/research-paper-adapter.ts:198-296` and the round-trip assertion at `src/publication/research-paper-adapter.test.ts:17` | not done |
-| G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, graph persistence helpers, and graph-bearing **values/property access** (including `bundle.graph` and `PublicationSourceResult.graph`) are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import or read them, and the concrete writer functions in `tools/publication-build.mjs` and `tools/publication-check.mjs` must not receive or read a graph (F3) | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots, resolving imports AND property/dataflow access | **does not exist** |
-| G-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`, plus an assertion that the graph is never persisted or treated as canonical text (F4) | `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `src/publication/struct-adapter.test.ts` | not found |
-| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version, including a mandatory `documentSha256` compared with the document digest recomputed from `decodedDocument` (as verified by `decodeStructBundle`), a mandatory `semanticReceiptSha256` compared with `structReceiptDigest(decodedDocument)` decoded from the receipt-bound Struct bundle artifact `struct-bundle.bin` written into the render output directory, and every receipt package-identity field (`packageSourceCommit`, `packageArtifact`, `packageArtifactSha256`, `packageIntegrity`, `packageVersion`) compared against `vendor/struct/provenance.json`; graph digests demoted to diagnostic (F8). **The Struct bundle must be carried, not reconstructed:** the canonical `StructDocument` and the verified bundle handle (or the exact encoded bundle bytes) must travel from the ingress through the adapter result, through `validatePublicationSourceResult`, through the registry and into the renderer, so that the `struct-bundle.bin` in the render output is exactly the receipt-bound bytes the checker decodes; the renderer must write the bytes it was given and the receipt's bundle digest must be the digest of the written file (F15). **The rendered assets must be bound to the decoded bundle:** the release checker must compare the decoded Struct bundle's asset identities, digests and byte lengths with the publication asset descriptor the renderer consumed (`asset-bundle.json`) and with the assets actually shipped in the output, so that a valid Struct bundle cannot be paired with different image bytes; this adds a comparison and weakens no existing asset check (F19). **The media metadata must be bound too:** the same admission comparison must also compare the decoded bundle's asset `mediaType` with the descriptor's `mediaType` and the decoded bundle's asset `href` with the file name the renderer shipped, because the shipped file's extension is derived from the media type alone (`publicationAssetFileExtension`, `src/publication/renderers/vivliostyle.ts:569-592`, which discards `fileName` at `:573`) and the EPUB manifest declares the asset's media type and href (`:822-824`); a projection that preserves an asset's id and bytes but assigns the wrong `mediaType` or `fileName` must be rejected, not admitted (F20). **Every shipped copy must be checked at its real path:** the renderer emits no root `assets/` directory, so one asset is shipped as three copies - `phone-webpub/assets/<assetId><ext>` (`src/publication/renderers/vivliostyle.ts:617`), `layout-assets/<assetId><ext>` (`:1125-1129`) and the `EPUB/assets/<assetId><ext>` ZIP entry inside `eink.epub` (`:815`, `:817-821`) - and the checker must hash each actual copy, the archive entry included; a path the renderer does not emit is a failure, not a skip (F21) | `src/publication/renderers/vivliostyle.ts:109-117`, `:1081-1207`, `:1107-1116`, `:546-567` (`writeAssets`), `:558` (shipped file name), `:569-592` (`publicationAssetFileExtension`), `:615-617` (WebPub asset copy), `:805-826` (EPUB assets), `:822-824` (OPF media type and href), `:1112-1115` (`asset-bundle.json`), `:1125-1129` (`layout-assets` copy); `src/publication/source-adapter.ts:25-61`, `:129-134` (closed `PublicationSourceResult`), `:177-216` (`validatePublicationSourceResult`); `src/publication/asset-bundle.ts:14-54` (asset descriptor), `:19-32` (`mediaType` and `fileName`), `:56-61` (bundle descriptor), `:124-134` (content-address verification); `src/publication/adapter-registry.ts:10` (`PublicationBundle`), `:30-38` (`resolve`); `src/publication/adapter-conformance.ts:447-494`; `tools/publication-check.mjs:35-59`, `:1145`, `:1162`, `:1152-1160` (persisted asset descriptor and shipped asset paths), `:1165-1169` (`assetBundleSha256` assert), `:1178`, `:1213` (`JSZip.loadAsync`); `vendor/struct/erniesg-struct-0.0.0-10116f4726da89ebabc823cb25706f2de5386f40.tgz::package/dist/types-J59yEqPh.d.ts:135-147` (decoded bundle asset entries: `mediaType`, `href`); `tests/struct-package-parity.test.ts:18-21`; `tests/struct-package-artifact.test.ts:45-77`; `vendor/struct/provenance.json` | not done; and the source result cannot carry the bundle at all today - `PublicationSourceResult` is a closed four-field type (`src/publication/source-adapter.ts:129-134`), `validatePublicationSourceResult` returns only those four fields (`:207-215`), and the registry passes exactly that value on (`src/publication/adapter-registry.ts:30-38`), so the encoded bundle is discarded before the renderer runs; and the release checker reads and digests only the app-side asset descriptor (`tools/publication-check.mjs:1152-1169`), so nothing compares the Struct bundle's assets with the publication asset descriptor or with the shipped asset files, the decoded bundle's asset `mediaType` and `href` are compared with nothing, and the renderer emits no root `assets/` directory at all - the only shipped copies are `phone-webpub/assets/`, `layout-assets/` and the `EPUB/assets/` entries inside `eink.epub` - so a checker that validated a root `assets/` path would validate a path the renderer never writes |
-| G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` (F5) | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) (companion doc, same tree after the inventory merge) | inventory **exists** (companion doc; grep-bounded, not compiler-proven); read-only enforcement not done |
-| G-12 | EPUBCheck / Ace / human-accessibility acceptance stays app-owned (F11) | `src/publication/renderers/vivliostyle.ts:724` (`publicationEpubAccessibilityMetadata`), `src/research/publication-integrity.ts` | app-owned today |
-| G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates (F5) | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
-| G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue (F6) | `src/struct/**`, `src/struct-adapters/**` | not done |
-| G-15 | No non-Struct graph producer remains: the forward `ResearchPaper` -> `PublicationGraph` bridge is retired or migrated onto the Struct projection (F3/F4) | `src/publication/research-paper-adapter.ts:81`, `:298`, `:304`, `:317`; `src/publication/struct-adapter.ts:188`, `:1313` | not done |
-| G-16 | Production renderer parity covers **every shipped artifact** of the production output, not only the `eink.epub` archive: the shipped WebPub content document `phone-webpub/index.html`, the resources it declares and references (the stylesheet, the assets, and the stylesheet's own font references), and the declared resource manifests (`phone-webpub/publication.json`, `EPUB/package.opf`); the frozen production case set contains the Astro case **and** the Payload case the production CLI can select; the Payload case is produced through the app-owned Payload-to-pinned-Struct ingress, which must be specified, tested against the pinned artifact, and landed **before** the Payload case is an E-04 exit gate - the Payload parity obligation itself is unchanged, not narrowed and not deferred (F12) | `src/publication/renderers/vivliostyle.ts:508` (`publicationGraphToHtml`), `:610-662` (`createWebPub`), `:617-618` (WebPub assets + stylesheet), `:634-638` (`phone-webpub/index.html`), `:639-660` (`phone-webpub/publication.json`), `:793-904` (`createPublicationEpub`); `tools/publication-build.mjs:54-67`; `tools/publication-adapter-conformance.mjs:59-91`; `tests/fixtures/publication/astro/payload-equivalent.mdx`; `tests/fixtures/payload/equivalent-publication.json`; `tests/fixtures/payload/mapping.json`; `src/publication/adapters/payload-lexical.ts:139` (mapping policy), `:1646` (direct graph construction), `:1726` (edition re-parse) | no production comparison is implemented for any shipped artifact; the previous scope was `EPUB/content.xhtml` only; the frozen inputs exist, but there is no frozen production-case fixture set and no `eink.epub` golden in the repository |
-| G-17 | The production Astro path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Astro-to-pinned-Struct conversion, the production CLI `--adapter astro` mapping, the registry/locator flow that carries it, and a red-first guard that the Astro path no longer constructs a `PublicationGraph`; the Astro provenance must survive the projection - the ingress must carry the outer Astro provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance before validation, so the route-parity policy in `tools/publication-check.mjs:61-94` sees a consistent `(adapterId, sourceType)` pair and the planned production build passes admission (F13); **an unsupported Astro construct must stay release-blocking** - the new ingress must either **throw** as the current adapter does from `unsupported` (`src/publication/adapters/astro.ts:84-92`) or make **admission reject** the diagnostic, because `validatePublicationSourceResult` (`src/publication/source-adapter.ts:177-216`) only parses and returns diagnostics (`:210-213`, severity enum at `:99`) and never rejects even an `error`-severity one, so a diagnostic-only implementation would publish a successful document with the construct omitted; the red-first test must cover the existing `tests/fixtures/publication/astro/unsupported-component.mdx` fixture and prove that the publication is refused (F22) | `src/publication/adapters/astro.ts:25-28` (`AstroSourceLocator`), `:84-92` (fail-closed unsupported node), `:167`, `:170-171`, `:403`, `:405`, `:423`, `:482`, `:508`, `:510`, `:522` (`unsupported` call sites), `:319-330` (asset descriptor construction), `:567` (direct `publicationGraphSchema.parse`), `:606-611` (adapter registration); `src/publication/source-adapter.ts:97-109` (`adapterDiagnosticSchema`), `:177-216` (`validatePublicationSourceResult`), `:210-213` (diagnostics parsed, never rejected); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:24` (`STRUCT_PUBLICATION_ADAPTER_ID`), `:175-181` (`sourceType`), `:660` (per-node provenance), `:1288-1296` (result provenance), `:1313-1318` (`structPublicationAdapter`); `src/publication/adapter-registry.ts:30-38` (`resolve`), `:55-60` (default registry); `tools/publication-build.mjs:31-69` (CLI allowlist), `:452-469` (source receipt from bundle provenance), `:1054-1067` (locator + resolve), `:1081-1086` (route-parity binding); `tools/publication-check.mjs:61-94` (`publicationReceiptRequiresCanonicalRouteParity`), `:1151` (release admission call); `src/publication/adapters/astro.test.ts:96-107` (existing fail-closed test); `tests/fixtures/publication/astro/unsupported-component.mdx` (negative fixture); `tests/struct-adapter-boundary.test.ts`; `vendor/struct/provenance.json` | the Astro adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/astro.ts:567`); no Astro-to-Struct ingress exists; the CLI maps `--adapter astro` to that direct producer; and the Struct projection stamps its own identity (`adapterId: 'struct-document'` at `src/publication/struct-adapter.ts:1290`, per node at `:660`; `sourceType: 'research-paper'` for a non-PDF/DOCX source at `:175-181`, `:1292`), while the Astro branch of the CLI binds the `'astro-canonical-route'` route-parity policy (`tools/publication-build.mjs:1081-1086`) - so a composed receipt would be rejected by `tools/publication-check.mjs:92-94`; the current fail-closed behaviour is a throw (`src/publication/adapters/astro.ts:84-92`), while the diagnostics path never rejects (`src/publication/source-adapter.ts:210-213`), so the fail-closed obligation is unimplemented for the new ingress |
-| G-18 | The production Payload path reaches the pinned Struct revision **before** any direct graph producer is retired: a concrete, tested Payload-to-pinned-Struct conversion, the production CLI `--adapter payload` mapping, the registry/locator flow that carries it, and a red-first guard that the Payload path no longer constructs a `PublicationGraph`; **the Payload provenance must survive the projection** - the ingress must carry the outer Payload provenance through `adaptStructDocument` or explicitly restamp **both** the result provenance and every per-node provenance to the Payload identity before validation - the per-node fields being exactly `adapterId`, `sourceId` and `sourceRevision`, while `sourceType` stays on the **result** provenance only, because the strict node provenance schema (`src/publication/schema.ts:114-122`) accepts no `sourceType` and the release admission check compares every node's `provenance.adapterId` (`tools/publication-check.mjs:274-280`), `provenance.sourceId` (`:281-288`) and `provenance.sourceRevision` (`:289-294`) against the receipt's source identity - so a `payload-lexical` build whose nodes still say `'struct-document'` is rejected at admission even though its route-parity policy is valid (F16); and **the multi-locale linked-edition contract must have a stated disposition** - either a per-locale Struct projection/linking design with a localized parity case, or the explicit retirement of the exported `adaptPayloadLexicalEditions` API with its callers named (`src/publication/adapters/payload-lexical.ts:1701-1726`, `src/publication/adapters/payload-lexical.test.ts:2829-2830`), so the redirect does not silently drop that contract (F17) | `src/publication/adapters/payload-lexical.ts:9` (`PAYLOAD_LEXICAL_ADAPTER_ID`), `:139` (mapping policy), `:819-838` (`commonNode` per-node provenance), `:1646` (direct graph construction), `:1662-1668` (result provenance), `:1673-1698` (single-locale `adaptPayloadLexical`), `:1701-1726` (`adaptPayloadLexicalEditions`, `equivalentNodeId` at `:1722`), `:1732-1736` (adapter registration); `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `:24` (`STRUCT_PUBLICATION_ADAPTER_ID`), `:55` (`localeFor`), `:133-143` (`sourceIdFor`), `:192` (per-result source id), `:229`, `:660` (per-node provenance), `:668` (`edition: { editionId }`), `:1288-1296` (result provenance); `src/publication/adapter-registry.ts:30-38` (`resolve`), `:55-60` (default registry); `tools/publication-build.mjs:31-69` (CLI allowlist), `:54`, `:66`, `:452-469`, `:1054-1067`, `:1084-1086`; `tools/publication-check.mjs:61-94` (`publicationReceiptRequiresCanonicalRouteParity`), `:265-294` (`assertPublicationReceiptSourceBinding`), `:1178` (release admission call); `src/publication/schema.ts:114-122` (strict node provenance schema), `:166` (`edition.equivalentNodeId`); `src/publication/adapter-conformance.ts:276-277`; `src/publication/adapters/payload-lexical.test.ts:5`, `:2829-2830`; `tests/struct-adapter-boundary.test.ts` | not done; the Payload adapter builds the graph directly (`publicationGraphSchema.parse` at `src/publication/adapters/payload-lexical.ts:1646`, edition re-parse at `:1726`); no Payload-to-Struct ingress exists; the CLI maps `--adapter payload` to that direct producer (`tools/publication-build.mjs:54`); and the Struct projection stamps its own identity on every node (`adapterId: 'struct-document'` at `src/publication/struct-adapter.ts:660`, result at `:1290`), while `adaptStructDocument` is single-locale and never emits `edition.equivalentNodeId` (`src/publication/struct-adapter.ts:55`, `:668`) - so a redirected Payload build would fail the per-node admission check, and the exported multi-locale edition API has no specified replacement |
+| G-01 | `PublicationGraph` is narrowed to an ephemeral, mechanically derived renderer plan from **one pinned approved Struct revision** | `src/publication/adapter-registry.ts:55-60` (drop/limit `astro` + `payload-lexical` graph production), `tools/publication-build.mjs:54-67` (`--adapter` allowlist), `src/publication/adapters/astro.ts`, `src/publication/adapters/payload-lexical.ts` | not done |
+| G-02 | The graph owns **no independent text** | `src/publication/schema.ts:172-315`, `:372-387` (text-bearing fields), `src/publication/research-paper-adapter.ts:198-296` (reverse text minting) | not done |
+| G-03 | The graph owns **no independent semantic IDs** | `src/publication/schema.ts:7-11` (own id grammar) — a narrowed plan must derive ids from the pinned Struct revision | not done |
+| G-04 | The graph owns **no persistence** | delete/disable `src/publication/renderers/vivliostyle.ts:1107-1111`; and the reader at `tools/publication-check.mjs:1145` | not done |
+| G-05 | The graph owns **no receipt** | `src/publication/renderers/vivliostyle.ts:109-117` + `:1189-1200`; `src/publication/source-adapter.ts:25-61` + `:148-175`; and the allowlist in `src/publication/adapter-conformance.ts:447-494` must be widened **deliberately** to accept the Struct bindings | not done |
+| G-06 | The graph owns **no writer** and **no release path** | `tools/publication-build.mjs` (`package.json` `build:production`); `src/publication/renderers/vivliostyle.ts:1081-1207` | not done |
+| G-07 | No reverse graph→ResearchPaper writer | `src/publication/research-paper-adapter.ts:198-296` and the round-trip assertion at `src/publication/research-paper-adapter.test.ts:17` | not done |
+| G-08 | Red-first static assertion: `PublicationGraph`, `publicationGraphSchema`, `serializePublicationGraph`, and graph persistence helpers are **absent** from storage / API / route / writer / release modules; only renderer/projection modules may import them | extend `tests/struct-adapter-boundary.test.ts` (AST harness at `:12-55`) to the `src/publication/**` + route/worker/writer roots | **does not exist** |
+| G-09 | Byte-identical double-adapt conformance for one pinned `StructDocument`, plus an assertion that the graph is never persisted or treated as canonical text | `src/publication/struct-adapter.ts:188` (`adaptStructDocument`), `src/publication/struct-adapter.test.ts` | not found |
+| G-10 | Receipts carry the canonical Struct digests and the exact package pin/version; graph digests demoted to diagnostic | `src/publication/renderers/vivliostyle.ts:109-117`; `src/publication/source-adapter.ts:25-61`; `src/publication/adapter-conformance.ts:447-494`; the CLI check at `tools/publication-check.mjs:1162` | not done |
+| G-11 | `ResearchPaper` stays a read-only compatibility model; a checked-in caller/test inventory exists for `src/publication/research-paper-adapter.ts` | [`docs/struct-research-paper-caller-inventory.md`](struct-research-paper-caller-inventory.md) (companion doc, same tree after the inventory merge) | inventory **exists** (companion doc; grep-bounded, not compiler-proven); read-only enforcement not done |
+| G-12 | EPUBCheck / Ace / human-accessibility acceptance stays app-owned | `src/publication/renderers/vivliostyle.ts:724` (`publicationEpubAccessibilityMetadata`), `src/research/publication-integrity.ts` | app-owned today |
+| G-13 | Legacy `research/epub.ts` overloads keep both-mode parity until the last `ResearchPaper` consumer migrates | `src/research/epub.ts:133-141`, `:1422-1447`, `:2094-2118` | parity **not demonstrated** here |
+| G-14 | E-07 deletion gates: zero production imports to removed portable modules; package-only app tests; retained-compatibility register with owner, caller inventory, warning/horizon, removal issue | `src/struct/**`, `src/struct-adapters/**` | not done |
 
 ## 10. Tests and frozen fixtures (kept separate from production callers)
 
@@ -1080,7 +762,7 @@ satisfaction and they add no obligation beyond the row text.
 | `tests/fixtures/payload/README.md` | fixture provenance notes |
 | `tests/fixtures/publication/astro/synthetic-publication.mdx` | Astro adapter fixture |
 | `tests/fixtures/publication/astro/payload-equivalent.mdx` | cross-adapter equivalence fixture |
-| `tests/fixtures/publication/astro/unsupported-component.mdx` | negative fixture; the unsupported-MDX refusal the new Astro ingress must keep release-blocking (`src/publication/adapters/astro.test.ts:96-107`; G-17) |
+| `tests/fixtures/publication/astro/unsupported-component.mdx` | negative fixture |
 | `tests/fixtures/publication/astro/fixture-image.svg` | asset fixture |
 | `tests/fixtures/struct-adapter-parity/observe.ts` | Struct parity observer (`buildStructEpub` at `:7`, `:89`) |
 | `tests/fixtures/struct-adapter-parity/reconstructions/` | frozen reconstruction inputs |

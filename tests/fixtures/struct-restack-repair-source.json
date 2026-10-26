@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "validatedBase": "e7080488dc481fc046c8b05921c855853c139a32",
+  "legacyIntegrationBase": "ddbec7e07bbcad8816c89df644ba2dcc076cbf8b",
+  "verifiedStructSource": "974735c66a46ecc8a3f2d4128da1893438bc25bf",
+  "sourceChanges": {
+    "src/annotations/annotation-bundle.test.ts": {
+      "mode": "100644",
+      "gitBlob": "5b965ef830b94855ea344b98cf165558aa8a81af"
+    },
+    "src/annotations/annotation-bundle.ts": {
+      "mode": "100644",
+      "gitBlob": "6dd970c3a5d4c46c2652166c5d156ba1cba8cff3"
+    },
+    "src/editorial/inactivity.test.ts": {
+      "mode": "100644",
+      "gitBlob": "08d20e6ee6fa94e3e9693c1da98a3bf0aea8b895"
+    },
+    "tests/zod4-compatibility.test.ts": {
+      "mode": "100644",
+      "gitBlob": "94cefa62de508b0510443d30569b40315e650de0"
+    },
+    "tests/zod4-main-compatibility.test.ts": {
+      "mode": "100644",
+      "gitBlob": "1f130f16aa02977dafe2a17a1f7d53f87c31b8b7"
+    }
+  }
+}

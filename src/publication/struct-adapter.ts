@@ -19,7 +19,7 @@ import type {
   StructInline,
   StructRelationship,
   StructTableCell,
-} from '../struct/types'
+} from '@erniesg/struct/document'
 
 export const STRUCT_PUBLICATION_ADAPTER_ID = 'struct-document' as const
 export const STRUCT_PUBLICATION_MAPPING_VERSION = '1.0.0' as const
@@ -161,6 +161,7 @@ function inlineStyle(
   return {
     ...(inline.bold ? { bold: true } : {}),
     ...(inline.italic ? { italic: true } : {}),
+    ...(inline.code ? { inlineCode: true } : {}),
     ...(inline.verticalAlign ? { verticalAlign: inline.verticalAlign } : {}),
     ...(inline.compactMathAtom ? { compactMathAtom: true } : {}),
   }
@@ -170,6 +171,17 @@ function relationshipStatusIsResolved(
   relationship: StructRelationship | undefined,
 ) {
   return relationship?.status === 'matched'
+}
+
+/**
+ * The authored alternative text of a block. The pinned Struct document keeps
+ * it in the block attributes, so the publication projection reads it from
+ * there and carries it into the node accessibility metadata and the asset
+ * descriptor.
+ */
+function alternativeTextFor(block: StructBlock) {
+  const value = block.attributes?.alternativeText
+  return typeof value === 'string' && value.trim() ? value : undefined
 }
 
 function sourceType(
@@ -306,6 +318,19 @@ export function adaptStructDocument(
   >()
   const captionIdsByParent = new Map<string, string>()
   const captionParentsByCaption = new Map<string, string>()
+  // The canonical claim for a (parentId, captionId) pair.  Two relationships
+  // that name the same pair describe ONE claim: the explicit `caption`
+  // relationship is the canonical form, and a typed visual relationship that
+  // names the same pair is superseded by it rather than competing with it.
+  const captionClaims = new Map<
+    string,
+    {
+      captionId: string
+      parentId: string
+      relationshipId: string
+      explicit: boolean
+    }
+  >()
   const graphBlockIds = new Set(baseGraphBlockIds)
   const knownAssetIds = new Set(document.assets.map((asset) => asset.id))
   const captionEndpointsFor = (relationship: StructRelationship) => {
@@ -365,6 +390,23 @@ export function adaptStructDocument(
       )
       continue
     }
+    const explicit = relationship.kind === 'caption'
+    const claimKey = JSON.stringify([endpoints.parentId, endpoints.captionId])
+    const claim = captionClaims.get(claimKey)
+    if (claim) {
+      // The SAME (parentId, captionId) pair, claimed twice.  That is one
+      // claim, not an ambiguity: the explicit `caption` relationship is the
+      // canonical form and a typed visual relationship that names the same
+      // pair is superseded by it.  The superseded relationship keeps resolving
+      // the same pair, so it stays in the accounting and its endpoints are
+      // not mistaken for unavailable ones.
+      if (explicit && !claim.explicit) {
+        claim.explicit = true
+        claim.relationshipId = relationship.id
+      }
+      captionLinks.set(relationship.id, endpoints)
+      continue
+    }
     if (
       captionIdsByParent.has(endpoints.parentId) ||
       captionParentsByCaption.has(endpoints.captionId)
@@ -380,6 +422,11 @@ export function adaptStructDocument(
     captionLinks.set(relationship.id, endpoints)
     captionIdsByParent.set(endpoints.parentId, endpoints.captionId)
     captionParentsByCaption.set(endpoints.captionId, endpoints.parentId)
+    captionClaims.set(claimKey, {
+      ...endpoints,
+      relationshipId: relationship.id,
+      explicit,
+    })
     if (
       baseGraphBlockIds.has(endpoints.parentId) &&
       blocksById.get(endpoints.captionId)?.text
@@ -831,6 +878,12 @@ export function adaptStructDocument(
           ...base,
           type: 'figure',
           title,
+          accessibility: {
+            ...base.accessibility,
+            ...(alternativeTextFor(block)
+              ? { alternativeText: alternativeTextFor(block)! }
+              : {}),
+          },
           ...(block.text ? { sourceText: block.text } : {}),
           ...(inlineRuns ? { inlineRuns } : {}),
           assetIds,
@@ -1067,6 +1120,17 @@ export function adaptStructDocument(
   const assetDescriptors: AssetDescriptor[] = []
   const assetBytes = new Map<string, Uint8Array>()
   const assetHashes = new Map<string, string>()
+  // The alternative text of a figure travels on the block that owns it, so
+  // the asset it references carries the same label into the bundle.
+  const assetAccessibilityLabels = new Map<string, string>()
+  for (const block of document.blocks) {
+    if (block.kind !== 'figure') continue
+    const label = alternativeTextFor(block)
+    if (!label) continue
+    for (const assetId of block.fallbackAssetIds ?? [])
+      if (!assetAccessibilityLabels.has(assetId))
+        assetAccessibilityLabels.set(assetId, label)
+  }
   for (const asset of document.assets) {
     if (!asset.bytes) {
       addDiagnostic(
@@ -1099,6 +1163,9 @@ export function adaptStructDocument(
       ...(basename(asset.href) ? { fileName: basename(asset.href) } : {}),
       ...(asset.width > 0 ? { width: asset.width } : {}),
       ...(asset.height > 0 ? { height: asset.height } : {}),
+      ...(assetAccessibilityLabels.has(asset.id)
+        ? { accessibilityLabel: assetAccessibilityLabels.get(asset.id)! }
+        : {}),
     })
     assetBytes.set(id, new Uint8Array(asset.bytes))
   }

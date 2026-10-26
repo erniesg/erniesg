@@ -4,6 +4,7 @@ import { constants as fsConstants } from 'node:fs'
 import {
   access,
   chmod,
+  copyFile,
   link,
   lstat,
   mkdir,
@@ -20,8 +21,14 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { canonicalPublicationSourceResult } from '../src/publication/adapter-conformance.ts'
-import { adaptPayloadLexical } from '../src/publication/adapters/payload-lexical.ts'
+import { adaptAstroBlogEntry } from '../src/publication/adapters/astro.ts'
+import {
+  buildPublicationPlan,
+  publicationSourceReceiptForPlan,
+  renderPublicationPlan,
+} from '../src/publication/publishing-facade.ts'
+import { buildStructDocument } from '../src/struct-adapters/index.ts'
+import { loadAdapterCase } from '../tests/fixtures/struct-adapter-parity/cases.ts'
 import {
   PUBLICATION_PROFILES,
   vivliostyleRenderer,
@@ -32,7 +39,6 @@ import {
   canonicalRouteBodyFingerprint,
   consumeRouteImageIndex,
   createPublicationStagingDirectory,
-  publicationGraphBodyFingerprint,
   publicationBuild,
   publicationReceiptDigest,
   publicationRepositoryForCurrentCheckout,
@@ -57,33 +63,126 @@ function macOSTemporaryAliasCases(processTemporaryDirectory) {
   return aliases
 }
 
-function payloadBuildArgs(output) {
+/**
+ * The retirement reason the build CLI reports.
+ *
+ * The message is the one the tool throws, so the refusal is pinned to the
+ * documented reason and not to a paraphrase of it.
+ */
+const PAYLOAD_RETIREMENT_MESSAGE =
+  'The Payload publication adapter was retired: `--adapter payload` is no longer available. Re-adding a Payload publication path requires a Struct-semantics conversion first.'
+
+// The Payload publication path was retired (E-04 P-2). The build CLI selects
+// the Astro source only, and the plan it publishes is the pinned Struct
+// revision the facade derives from that source.
+const ASTRO_ENTRY_ID = 'moving-to-cloudflare-with-astro'
+
+function astroBuildArgs(output) {
   return [
     '--adapter',
-    'payload',
-    '--input',
-    'tests/fixtures/payload/equivalent-publication.json',
-    '--mapping',
-    'tests/fixtures/payload/mapping.json',
+    'astro',
+    '--entry',
+    ASTRO_ENTRY_ID,
     '--output',
     output,
   ]
 }
 
-async function payloadFixtureBundle() {
-  return canonicalPublicationSourceResult(
-    adaptPayloadLexical(
-      JSON.parse(
-        await readFile(
-          resolve('tests/fixtures/payload/equivalent-publication.json'),
-          'utf8',
-        ),
-      ),
-      JSON.parse(
-        await readFile(resolve('tests/fixtures/payload/mapping.json'), 'utf8'),
-      ),
-    ),
+/**
+ * The publication plan the builder publishes.
+ *
+ * The builder takes its publication semantics from the facade, so the tests
+ * publish a plan instead of a source result. The plan is the pinned Struct
+ * revision, and its provenance is the Struct document's own: the retired
+ * Payload source is never faked onto it.
+ */
+let structPlanFixture
+async function structPlan() {
+  structPlanFixture ??= await (async () => {
+    const structDocument = buildStructDocument(
+      await loadAdapterCase('ordinary-pdf'),
+    )
+    return buildPublicationPlan({
+      adapterId: 'struct',
+      document: structDocument,
+    })
+  })()
+  return structPlanFixture
+}
+
+/** The runtime the builder tests publish their plan with. */
+const structBuildRuntime = { buildPlan: () => structPlan() }
+
+/**
+ * The rendered bundle of the Astro fixture.
+ *
+ * The bundle carries the pinned Struct revision the Astro adapter produced,
+ * so the renderer sees the same bundle the CLI would publish. The fixture has
+ * one local image, so the renderer really resolves asset bytes.
+ */
+async function astroFixtureBundle() {
+  const contentRoot = await mkdtemp(
+    resolve(tmpdir(), 'publication-build-astro-fixture-'),
   )
+  const entryRoot = resolve(contentRoot, 'payload-equivalent')
+  await mkdir(entryRoot, { recursive: true })
+  await writeFile(
+    resolve(entryRoot, 'index.mdx'),
+    await readFile(
+      resolve('tests/fixtures/publication/astro/payload-equivalent.mdx'),
+      'utf8',
+    ),
+    { flag: 'wx' },
+  )
+  await copyFile(
+    resolve('public/favicon-16x16.png'),
+    resolve(entryRoot, 'fixture-image.png'),
+    fsConstants.COPYFILE_EXCL,
+  )
+  const source = await adaptAstroBlogEntry({
+    entryId: 'payload-equivalent',
+    contentRoot,
+  })
+  return {
+    contentRoot,
+    bundle: {
+      graph: source.graph,
+      assetBundle: source.assetBundle,
+      diagnostics: source.diagnostics,
+      provenance: source.provenance,
+      structDocument: source.structDocument,
+      sourceBinding: source.sourceBinding,
+    },
+  }
+}
+
+/**
+ * Publish a rendered plan over an existing output directory.
+ *
+ * The CLI's Astro path additionally writes the canonical route parity
+ * payload, which needs the built Astro route (`dist/blog/<entry>/index.html`).
+ * A unit test cannot produce that build, so the publish boundary itself is
+ * exercised here, with the same facade plan the CLI would publish.
+ */
+async function publishStagedPlan(plan, output) {
+  const staging = await createPublicationStagingDirectory(output)
+  try {
+    const stagedOutput = resolve(staging, 'output')
+    await renderPublicationPlan(plan, {
+      outputDirectory: stagedOutput,
+      profiles: PUBLICATION_PROFILES,
+      routeParity: 'not-applicable',
+    })
+    await bindPublicationSourceReceipt(
+      stagedOutput,
+      publicationSourceReceiptForPlan(plan),
+      'not-applicable',
+      [staging],
+    )
+    await publishPublicationOutput(stagedOutput, output)
+  } finally {
+    await rm(staging, { recursive: true, force: true })
+  }
 }
 
 describe('publication:build CLI', () => {
@@ -110,48 +209,63 @@ describe('publication:build CLI', () => {
     ).toThrow(/Unknown/)
   })
 
-  it('accepts a local Payload export and versioned mapping without an Astro entry', () => {
+  it('refuses the retired Payload publication adapter with the documented reason', () => {
+    // The Payload publication path was retired (E-04 P-2). Every spelling of
+    // the retired adapter is refused with the documented retirement reason,
+    // not with a generic "unsupported adapter" error.
+    for (const adapter of ['payload', 'payload-lexical']) {
+      expect(() =>
+        parsePublicationBuildArgs([
+          '--adapter',
+          adapter,
+          '--input',
+          'tests/fixtures/payload/publication.json',
+          '--mapping',
+          'tests/fixtures/payload/mapping.json',
+          '--output',
+          '.agent/evidence/payload-publication',
+        ]),
+      ).toThrow(PAYLOAD_RETIREMENT_MESSAGE)
+    }
+    // The Payload-only options are gone with the path they served. They are
+    // not left dangling as silently ignored flags: each one names the option
+    // and the retirement reason.
+    for (const option of ['--input', '--mapping']) {
+      expect(() =>
+        parsePublicationBuildArgs([
+          '--adapter',
+          'astro',
+          option,
+          'tests/fixtures/payload/publication.json',
+          '--output',
+          'output',
+        ]),
+      ).toThrow(
+        `Publication:build option ${option} was removed with the retired Payload publication path: ${PAYLOAD_RETIREMENT_MESSAGE}`,
+      )
+    }
+    // The surviving Astro path still requires its entry.
+    expect(() =>
+      parsePublicationBuildArgs(['--adapter', 'astro', '--output', 'output']),
+    ).toThrow(/Astro publication builds require --entry/)
     expect(
       parsePublicationBuildArgs([
         '--adapter',
-        'payload',
-        '--input',
-        'tests/fixtures/payload/publication.json',
-        '--mapping',
-        'tests/fixtures/payload/mapping.json',
-        '--output',
-        '.agent/evidence/payload-publication',
-      ]),
-    ).toEqual({
-      adapter: 'payload-lexical',
-      input: 'tests/fixtures/payload/publication.json',
-      mapping: 'tests/fixtures/payload/mapping.json',
-      output: '.agent/evidence/payload-publication',
-    })
-    expect(() =>
-      parsePublicationBuildArgs([
-        '--adapter',
-        'payload',
+        'astro',
         '--entry',
         'astro-only',
         '--output',
         'output',
       ]),
-    ).toThrow(/Payload.*--input/)
-    expect(() =>
-      parsePublicationBuildArgs([
-        '--adapter',
-        'astro',
-        '--input',
-        'payload.json',
-        '--output',
-        'output',
-      ]),
-    ).toThrow(/Astro.*--entry/)
+    ).toEqual({
+      adapter: 'astro',
+      entry: 'astro-only',
+      output: 'output',
+    })
   })
 
   it(
-    'never lets an unsafe relationship target cross the CLI stderr boundary',
+    'never reads or echoes operator-supplied Payload input when the CLI refuses the retired adapter',
     { timeout: 120_000 },
     async () => {
       const sentinel = 'unsafe-target?credential=redact-me'
@@ -214,9 +328,10 @@ describe('publication:build CLI', () => {
         expect(failure.status).not.toBe(0)
         const stdout = String(failure.stdout ?? '')
         const stderr = String(failure.stderr ?? '')
-        expect(stderr).toMatch(
-          /Payload relationship target \(sha256:[0-9a-f]{16}\) is not a graph-safe id/,
-        )
+        // The refusal is the documented retirement reason, and the retired
+        // path never read the operator-supplied export, so nothing of it can
+        // cross the CLI boundary.
+        expect(stderr).toContain(PAYLOAD_RETIREMENT_MESSAGE)
         for (const stream of [stdout, stderr]) {
           expect(stream).not.toContain(sentinel)
           expect(stream).not.toContain('credential')
@@ -248,64 +363,9 @@ describe('publication:build CLI', () => {
     )
   })
 
-  it('binds canonical route body semantics to the publication graph', () => {
-    const graph = {
-      nodes: [
-        { type: 'heading', level: 1, text: 'Heading' },
-        { type: 'paragraph', text: 'Body proof' },
-      ],
-    }
-    const expected = publicationGraphBodyFingerprint(graph)
-    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Body proof</p></article>')).toEqual(expected)
-    expect(canonicalRouteBodyFingerprint('<article><h1>Heading</h1><p>Changed</p></article>')).not.toEqual(expected)
-  })
 
-  it('reads a post body inside the reading shell, not the shell around it', () => {
-    const graph = {
-      nodes: [
-        { type: 'heading', level: 1, text: 'Heading' },
-        { type: 'paragraph', text: 'Body proof' },
-      ],
-    }
-    // ReadingLayout makes the text column the <article>, so the post's own
-    // breadcrumb, title and navigation sit beside its prose. The prose is the
-    // element marked `data-post-content`.
-    const shell = `<article class="reading-text"><nav>Blog › Post</nav>
-      <h1>The post title</h1><p>February 10, 2025</p>
-      <div class="prose" data-post-content><h1>Heading</h1><p>Body proof</p></div>
-      <nav><p>Next post</p></nav></article>`
-    expect(canonicalRouteBodyFingerprint(shell)).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
-  it('treats Astro typographic apostrophes as the same authored body text', () => {
-    const graph = {
-      nodes: [{ type: 'paragraph', text: "Author's proof" }],
-    }
-    expect(canonicalRouteBodyFingerprint('<article><p>Author’s proof</p></article>')).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
-  it('normalizes Markdown image titles to graph caption semantics', () => {
-    const graph = {
-      nodes: [
-        {
-          type: 'figure',
-          title: 'Alt text',
-          assetIds: ['asset'],
-          captionId: 'caption',
-        },
-        { id: 'caption', type: 'caption', text: 'Authored image title' },
-      ],
-    }
-    const html =
-      '<article><p><img src="/assets/figure.png" alt="Alt text" title="Authored image title"></p></article>'
-    expect(canonicalRouteBodyFingerprint(html)).toEqual(
-      publicationGraphBodyFingerprint(graph),
-    )
-  })
 
   it('consumes duplicate canonical-route image matches one-to-one', () => {
     const images = [
@@ -340,7 +400,7 @@ describe('publication:build CLI', () => {
       await writeFile(staleParity, '{"stale":true}\n')
       await writeFile(strayFile, 'kept-on-failure\n')
       await expect(
-        publicationBuild(payloadBuildArgs(output)),
+        publicationBuild(astroBuildArgs(output), structBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       expect(await readFile(staleParity, 'utf8')).toBe('{"stale":true}\n')
       expect(await readFile(strayFile, 'utf8')).toBe('kept-on-failure\n')
@@ -364,7 +424,8 @@ describe('publication:build CLI', () => {
       throw new Error('renderer must not run on an unsupported platform')
     }
     try {
-      const error = await publicationBuild(payloadBuildArgs(output), {
+      const error = await publicationBuild(astroBuildArgs(output), {
+        ...structBuildRuntime,
         platform: 'win32',
       }).then(
         () => undefined,
@@ -393,7 +454,10 @@ describe('publication:build CLI', () => {
     )
     const outputParent = resolve(temporaryRoot, 'must-not-be-created')
     const output = resolve(outputParent, 'output')
-    const neverReadInput = resolve(temporaryRoot, 'never-read.json')
+    // The retired Payload source is gone, so the CLI resolves an Astro entry
+    // now. This entry does not exist: the probe below has to fail before the
+    // adapter ever looks at it.
+    const missingEntry = 'publication-build-python-preflight-missing-entry'
     const originalRender = vivliostyleRenderer.render
     let renderCalls = 0
     vivliostyleRenderer.render = async () => {
@@ -406,9 +470,9 @@ describe('publication:build CLI', () => {
       const error = await publicationBuild(
         [
           '--adapter',
-          'payload',
-          '--input',
-          neverReadInput,
+          'astro',
+          '--entry',
+          missingEntry,
           '--output',
           output,
         ],
@@ -424,11 +488,10 @@ describe('publication:build CLI', () => {
       )
       expect(error?.message).not.toContain(output)
       expect(renderCalls).toBe(0)
-      // The missing input file was never read, so adapter resolution did not
-      // start; no staging directory or output parent was ever created.
-      await expect(access(neverReadInput)).rejects.toMatchObject({
-        code: 'ENOENT',
-      })
+      // The python3 probe ran before adapter resolution, so the missing Astro
+      // entry was never resolved (that failure would have carried a different
+      // message); no staging directory or output parent was ever created.
+      expect(error?.message).not.toContain(missingEntry)
       await expect(access(outputParent)).rejects.toMatchObject({
         code: 'ENOENT',
       })
@@ -451,7 +514,10 @@ describe('publication:build CLI', () => {
     vivliostyleRenderer.render = async (bundle, request) => {
       const target = resolve(request.outputDirectory)
       await mkdir(target, { recursive: true })
-      const source = publicationSourceReceipt(bundle, 'not-applicable')
+      const source = publicationSourceReceipt(
+        await structPlan(),
+        'not-applicable',
+      )
       await writeFile(
         resolve(target, 'publication-graph.json'),
         'staged-graph\n',
@@ -477,7 +543,12 @@ describe('publication:build CLI', () => {
       await mkdir(output)
       await writeFile(staleParity, '{"stale":true}\n')
       await writeFile(strayFile, 'merged-into?\n')
-      await publicationBuild(payloadBuildArgs(output))
+      // The CLI's Astro path additionally writes the canonical route parity
+      // payload, which needs the built Astro route
+      // (`dist/blog/<entry>/index.html`); a unit test cannot produce that
+      // build, so the publish boundary itself is exercised here, with the
+      // same facade plan the CLI would publish.
+      await publishStagedPlan(await structPlan(), output)
       await expect(access(staleParity)).rejects.toMatchObject({
         code: 'ENOENT',
       })
@@ -485,7 +556,7 @@ describe('publication:build CLI', () => {
       const receipt = JSON.parse(
         await readFile(resolve(output, 'publication-receipt.json'), 'utf8'),
       )
-      expect(receipt.source.adapterId).toBe('payload-lexical')
+      expect(receipt.source.adapterId).toBe('struct-document')
       expect((await readdir(temporaryRoot)).sort()).toEqual(['output'])
     } finally {
       vivliostyleRenderer.render = originalRender
@@ -537,13 +608,13 @@ describe('publication:build CLI', () => {
       await writeFile(resolve(externalSymlinkTarget, 'sentinel.txt'), 'kept\n')
       await symlink(externalSymlinkTarget, repositorySymlinkOutput, 'dir')
       await expect(
-        publicationBuild(payloadBuildArgs(repositoryOutput)),
+        publicationBuild(astroBuildArgs(repositoryOutput), structBuildRuntime),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
       await expect(
-        publicationBuild(payloadBuildArgs(linkedRepositoryOutput)),
+        publicationBuild(astroBuildArgs(linkedRepositoryOutput), structBuildRuntime),
       ).rejects.toThrow(/repository-local publication output.*ignored/i)
       await expect(
-        publicationBuild(payloadBuildArgs(repositorySymlinkOutput)),
+        publicationBuild(astroBuildArgs(repositorySymlinkOutput), structBuildRuntime),
       ).rejects.toThrow(/publication output path.*symbolic link/i)
       expect(renderedOutputs).toEqual([])
       await expect(readFile(staleRepositoryParity, 'utf8')).resolves.toBe(
@@ -558,10 +629,10 @@ describe('publication:build CLI', () => {
       ).resolves.toBe('kept\n')
 
       await expect(
-        publicationBuild(payloadBuildArgs(ignoredOutput)),
+        publicationBuild(astroBuildArgs(ignoredOutput), structBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       await expect(
-        publicationBuild(payloadBuildArgs(externalOutput)),
+        publicationBuild(astroBuildArgs(externalOutput), structBuildRuntime),
       ).rejects.toThrow('render-boundary-captured')
       expect(renderedOutputs).toHaveLength(2)
       // Renders target invocation-owned staging directories next to the
@@ -593,36 +664,23 @@ describe('publication:build CLI', () => {
     }
   })
 
-  it('keeps opaque Payload document identities in source receipts', () => {
-    const rawId = ['github', '_pat_', 'R'.repeat(24)].join('')
-    const bundle = canonicalPublicationSourceResult(
-      adaptPayloadLexical({
-        id: rawId,
-        title: 'Opaque receipt identity',
-        locale: 'en',
-        content: {
-          root: {
-            type: 'root',
-            children: [
-              {
-                type: 'paragraph',
-                children: [{ type: 'text', text: 'Body' }],
-              },
-            ],
-          },
-        },
-      }),
+  it('publishes only the pinned Struct revision, never a retired Payload source', async () => {
+    // The retired Payload adapter derived an opaque document identity from an
+    // operator-supplied export id. The surviving path identifies its source
+    // with the pinned Struct revision the facade published, so a receipt can
+    // no longer name a Payload source at all.
+    const receipt = publicationSourceReceipt(
+      await structPlan(),
+      'not-applicable',
     )
-
-    const receipt = publicationSourceReceipt(bundle, 'not-applicable')
-    expect(JSON.stringify(receipt)).not.toContain(rawId)
-    expect(receipt.sourceId).toMatch(
-      /^payload:document-[a-f0-9]{64}:en$/,
-    )
+    expect(receipt.adapterId).toBe('struct-document')
+    expect(receipt.adapterId).not.toBe('payload-lexical')
+    expect(receipt.sourceType).not.toBe('payload')
+    expect(receipt.sourceRevision).toMatch(/^[a-f0-9]{64}$/u)
+    expect(JSON.stringify(receipt)).not.toContain('payload')
   })
 
   it('records observed dirtiness truthfully in an adapter-conformance receipt', async () => {
-    const bundle = await payloadFixtureBundle()
     const repositoryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-conformance-repository-'),
     )
@@ -649,7 +707,10 @@ describe('publication:build CLI', () => {
         cwd: repositoryRoot,
         encoding: 'utf8',
       }).trim()
-      const source = publicationSourceReceipt(bundle, 'adapter-conformance')
+      const source = publicationSourceReceipt(
+        await structPlan(),
+        'adapter-conformance',
+      )
       await writeFile(
         resolve(outputRoot, 'publication-receipt.json'),
         `${JSON.stringify(
@@ -671,7 +732,7 @@ describe('publication:build CLI', () => {
 
       const receipt = await bindPublicationSourceReceipt(
         outputRoot,
-        bundle,
+        publicationSourceReceiptForPlan(await structPlan()),
         'adapter-conformance',
       )
 
@@ -1555,7 +1616,7 @@ describe('publication output safety', () => {
       const output = resolve(temporaryRoot, 'output')
       await mkdir(output)
       await symlink(sentinel, resolve(output, 'publication-graph.json'))
-      const outcome = await publicationBuild(payloadBuildArgs(output)).then(
+      const outcome = await publicationBuild(astroBuildArgs(output), structBuildRuntime).then(
         () => 'published',
         () => 'failed',
       )
@@ -1572,11 +1633,11 @@ describe('publication output safety', () => {
     const temporaryRoot = await mkdtemp(
       resolve(tmpdir(), 'publication-output-safety-toctou-'),
     )
+    const { contentRoot, bundle: fixtureBundle } = await astroFixtureBundle()
     try {
       const sentinel = resolve(temporaryRoot, 'victim.txt')
       await writeFile(sentinel, SENTINEL)
       const renderTarget = resolve(temporaryRoot, 'render-output')
-      const fixtureBundle = await payloadFixtureBundle()
       let planted = false
       const bundle = {
         ...fixtureBundle,
@@ -1600,6 +1661,7 @@ describe('publication output safety', () => {
       expect(planted).toBe(true)
       expect(await readFile(sentinel, 'utf8')).toBe(SENTINEL)
     } finally {
+      await rm(contentRoot, { recursive: true, force: true })
       await rm(temporaryRoot, { recursive: true, force: true })
     }
   }, 120_000)
@@ -1614,7 +1676,7 @@ describe('publication output safety', () => {
       const output = resolve(temporaryRoot, 'output')
       await mkdir(output)
       await link(sentinel, resolve(output, 'publication-graph.json'))
-      await publicationBuild(payloadBuildArgs(output)).catch(() => {})
+      await publicationBuild(astroBuildArgs(output), structBuildRuntime).catch(() => {})
       expect(await readFile(sentinel, 'utf8')).toBe(SENTINEL)
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true })
@@ -1630,7 +1692,7 @@ describe('publication output safety', () => {
       await mkdir(output)
       const fifo = resolve(output, 'publication-graph.json')
       execFileSync('mkfifo', [fifo])
-      const buildOutcome = publicationBuild(payloadBuildArgs(output)).then(
+      const buildOutcome = publicationBuild(astroBuildArgs(output), structBuildRuntime).then(
         () => 'completed',
         () => 'completed',
       )

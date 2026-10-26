@@ -2175,7 +2175,13 @@ jobs:
                       os.chmod(target, 0o550 if executable else 0o440, follow_symlinks=False)
 
 
-          def seal_readable_tree(path: str, *, owner_uid: int, candidate_gid: int) -> None:
+          def seal_readable_tree(
+              path: str,
+              *,
+              owner_uid: int,
+              candidate_gid: int,
+              candidate_uid: int | None = None,
+          ) -> None:
               if os.geteuid() != 0:
                   refuse("readable-tree sealing requires root privileges")
               runner_root = os.path.dirname(os.path.realpath(__file__))
@@ -2187,6 +2193,19 @@ jobs:
                   refuse("readable tree is invalid")
               if resolved == runner_root or not os.path.isdir(resolved) or os.path.islink(resolved):
                   refuse("readable tree must be one descendant directory")
+              allowed_owners = {owner_uid}
+              remaining = 64 * 1024 * 1024
+              if candidate_uid is not None:
+                  # Only the completed producer's exact evidence tree may hand
+                  # candidate-owned private files back to the trusted collector.
+                  evidence_root = os.path.join(
+                      runner_root, "dependencies", "source", ".agent", "evidence"
+                  )
+                  if candidate_uid <= 0 or candidate_uid == owner_uid:
+                      refuse("evidence owner and candidate identities must differ")
+                  if path != evidence_root or resolved != evidence_root:
+                      refuse("evidence handoff must use the exact isolated evidence root")
+                  allowed_owners.add(candidate_uid)
 
               entries: list[tuple[str, os.stat_result]] = []
               for directory, names, files in os.walk(resolved, topdown=True, followlinks=False):
@@ -2194,9 +2213,9 @@ jobs:
                   if (
                       not stat.S_ISDIR(details.st_mode)
                       or stat.S_ISLNK(details.st_mode)
-                      or details.st_uid != owner_uid
+                      or details.st_uid not in allowed_owners
                   ):
-                      refuse("readable-tree directories must be trusted-launcher owned")
+                      refuse("readable-tree directories have an unexpected owner")
                   entries.append((directory, details))
                   for name in (*names, *files):
                       target = os.path.join(directory, name)
@@ -2209,9 +2228,13 @@ jobs:
                           not stat.S_ISREG(target_details.st_mode)
                           or stat.S_ISLNK(target_details.st_mode)
                           or target_details.st_nlink != 1
-                          or target_details.st_uid != owner_uid
+                          or target_details.st_uid not in allowed_owners
                       ):
                           refuse("readable tree contains an unsupported or shared entry")
+                      if candidate_uid is not None:
+                          if target_details.st_size > remaining:
+                              refuse("revalidation evidence exceeds 64 MiB")
+                          remaining -= target_details.st_size
                       entries.append((target, target_details))
 
               for target, details in entries:
@@ -2593,6 +2616,20 @@ jobs:
                       refuse("control-file identities must be non-negative owner and positive candidate")
                   seal_control_file(
                       sys.argv[2], owner_uid=owner_uid, candidate_gid=candidate_gid
+                  )
+                  return 0
+              if len(sys.argv) == 6 and sys.argv[1] == "--seal-evidence-tree":
+                  identities = sys.argv[3:]
+                  if not all(value.isascii() and value.isdecimal() for value in identities):
+                      refuse("evidence identities must be decimal numbers")
+                  owner_uid, candidate_uid, candidate_gid = map(int, identities)
+                  if owner_uid < 0 or candidate_gid <= 0:
+                      refuse("evidence identities must be non-negative owner and positive group")
+                  seal_readable_tree(
+                      sys.argv[2],
+                      owner_uid=owner_uid,
+                      candidate_gid=candidate_gid,
+                      candidate_uid=candidate_uid,
                   )
                   return 0
               if len(sys.argv) == 5 and sys.argv[1] == "--seal-readable-tree":
@@ -4043,7 +4080,7 @@ jobs:
             return resolved;
           }
 
-          function sealCandidateReadableTree(target, label) {
+          function sealCandidateReadableTree(target, label, evidence = false) {
             assertPinnedRegularFile(candidateRunner, pinnedRunner, "trusted candidate runner", label);
             assertPinnedRegularFile(trustedSudo, pinnedSudo, "trusted sudo executable", label);
             const sealed = spawnSync(
@@ -4052,9 +4089,10 @@ jobs:
                 "-I",
                 "-B",
                 candidateRunner,
-                "--seal-readable-tree",
+                evidence ? "--seal-evidence-tree" : "--seal-readable-tree",
                 target,
                 String(process.getuid()),
+                ...(evidence ? [String(candidateUid)] : []),
                 String(candidateGid),
               ]),
               {
@@ -4681,6 +4719,10 @@ jobs:
           if (evidenceRoot === candidateRoot || evidenceRoot.startsWith(`${candidateRoot}/`)) {
             fail("trusted evidence root must stay outside the candidate checkout");
           }
+          // candidateSpawnSync has already killed/reaped the candidate UID.
+          // Seal only its evidence tree before the launcher reads private files;
+          // never grant the candidate access to the trusted export directory.
+          sealCandidateReadableTree(path.resolve(".agent/evidence"), "candidate evidence", true);
           copyTrustedEvidence(".agent/evidence", trustedEvidenceRoot);
           process.exit(producerStatus);
           RUCKSACK_TRUSTED_LAUNCHER

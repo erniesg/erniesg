@@ -1184,6 +1184,20 @@ test('reader controls reflow samples and uploads at model and custom sizes', asy
     .toBe('16px')
   await expect(body).toContainText('Uploaded reader text')
   await expect(frame).toHaveAttribute('srcdoc', /Uploaded reader text/)
+  // Paint the whole reader on-screen before capturing it. An off-screen iframe
+  // can retain stale pixels in Chromium's full-page screenshot. Only expand the
+  // capture height: mobile width and the phone reader's 390 × 844 stay unchanged.
+  const captureSize = await page.evaluate(() => ({
+    width: innerWidth,
+    height: document.documentElement.scrollHeight,
+  }))
+  await page.setViewportSize(captureSize)
+  await expect(page.locator('[data-struct-preview-viewport]')).toBeInViewport({
+    ratio: 1,
+  })
+  await frame.screenshot({
+    path: '.agent/evidence/struct-reader-controls-mobile-frame.png',
+  })
   await page.screenshot({
     path: '.agent/evidence/struct-reader-controls-mobile.png',
     fullPage: true,

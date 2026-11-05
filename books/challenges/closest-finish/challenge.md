@@ -37,15 +37,14 @@ A cycling club has timed the same hill climb for twenty years. A box at the
 bottom starts your clock, a box at the top stops it, and the board now holds
 200,000 ascents.
 
-The club is being sold new timing boxes and wants to know whether it needs
-them. The question the salesman asked: across the whole board, what is the
-smallest gap between any two ascents? If two ascents have ever been four
-hundredths of a second apart, gear that can only separate a tenth has been
-rounding somebody off the podium for years.
+A salesman is selling the club new timing boxes. The salesman's question:
+across the whole board, what is the smallest gap between any two ascents? If
+two ascents were four hundredths of a second apart, boxes that only measure tenths have
+been ranking those riders wrongly for years.
 
 Each ascent on the board is a rider's number and their time in hundredths of a
 second. Return the smallest difference between any two of the times. With
-fewer than two ascents there is no gap to report, so return -1.
+fewer than two ascents there is no gap, so return -1.
 :::
 
 :::io
@@ -58,8 +57,8 @@ output: the smallest difference between any two of the times, or -1 for fewer th
 - `rider` is a whole number between 1 and 1,000,000. The same rider may appear
   many times.
 - `hundredths` is a whole number between 0 and 3,000,000.
-- Two ascents may share a time. Their gap is 0, and 0 is a legal answer.
-- The board you were handed must come back unchanged.
+- Two ascents may share a time. Their gap is 0, and 0 is a valid answer.
+- The board you were given must come back unchanged.
 - Comparing every ascent with every other is too slow to pass.
 :::
 
@@ -74,8 +73,8 @@ output: the smallest difference between any two of the times, or -1 for fewer th
 :::
 
 :::figure{id="four-shapes"}
-Every pair of ascents at 200,000 is the bottom row. Sorting first is the row
-above it.
+Comparing every pair of ascents at 200,000 is the bottom row. Sorting first is
+the row above it.
 :::
 
 :::run{starter="starter.py"}
@@ -83,29 +82,28 @@ above it.
 
 :::hint{level=1}
 Count it before you write it. Every ascent against every other is
-200,000 × 200,000 ÷ 2 = 20 billion subtractions, which the ten-million rule
-calls 2,000 seconds. The perf tier gives you three. So the every-pair answer is
-out, and the only other shape in your hands that beats it is a sort.
+200,000 × 200,000 ÷ 2 = 20 billion subtractions. The ten-million rule puts
+that at 2,000 seconds, and the perf tier gives you three. So the every-pair
+answer is out. The only other method you have met that is faster is a sort.
 :::
 
 :::hint{level=2}
-Here is the fact that makes sorting worth its 3.4 million steps. If two times
-are the closest pair on the board, then once the times are in order there is
-nothing that can sit between them. Which means they end up **next to each
-other**, and you only ever have to look at neighbours.
+Sorting costs about 3.4 million steps. Here is why it is worth it. Once the
+times are in order, no other time can sit between the two closest ones. So
+they end up **next to each other**, and you only have to look at neighbours.
 :::
 
 :::hint{level=3}
-So: put the times in order, then walk the sorted list once, subtracting each
-value from the one after it, and keep the smallest difference you see. One
-sort, one pass, and no loop inside a loop anywhere.
+Put the times in order. Walk the sorted list once, subtracting each value from
+the one after it, and keep the smallest difference. That is one sort and one
+pass, with no loop inside a loop.
 :::
 
 :::hint{level=4}
-`sorted(ascents)` is the trap. These are pairs, and comparing two pairs starts
-at the first item — the rider number — and only looks at the time when two
-rider numbers are equal. The second sample is on the page to catch exactly
-that. Sort the times themselves, or pass `key=` and say which part you mean.
+`sorted(ascents)` sorts by the wrong thing. The items are pairs, and Python
+compares two pairs by their first item, the rider number. It only looks at the time when
+two rider numbers are equal. The second sample catches this. Sort the times
+themselves, or pass `key=` to say which part to sort by.
 :::
 
 :::solution
@@ -124,39 +122,33 @@ not have been the closest pair. So nothing can be between them: in the sorted
 list they are side by side. Checking 199,999 neighbouring pairs answers a
 question that looked like it needed 20 billion.
 
-This is the shape to remember from this chapter. Sorting did not find the
-answer. It made a stupid question cheap, and it is worth its n log n whenever
-it does that.
+Sorting did not find the answer. It made a slow question cheap, which is
+worth its n log n cost.
 
 **Counting it.** Sorting 200,000 numbers is about 3.4 million comparison-steps
 and measures at three hundredths of a second, all of it inside C. The walk
-afterwards is 200,000 subtractions. Total: under a twentieth of a second,
-against twenty minutes for the every-pair version — which is correct, and is
-still running.
+afterwards is 200,000 subtractions. The total is under a twentieth of a
+second. The every-pair version is also correct, but takes about twenty
+minutes.
 
-**The rider numbers are the trap, and they are deliberate.** `sorted(ascents)`
-compiles perfectly and returns a list in rider-number order. It then reports
-the smallest gap between *consecutive rider numbers' times*, which is a real
-number about a meaningless thing. The second public sample fails on it and the
-first one does not, which is why there are five samples rather than three.
+**The rider numbers.** `sorted(ascents)` runs without error but puts the pairs
+in rider-number order. The gaps between neighbours in that order mean nothing,
+and the second public sample fails on it.
 
-Two honest ways out:
+Two ways to sort by time instead:
 
 ```python
 times = sorted(hundredths for _, hundredths in ascents)      # take the times
 times = [h for _, h in sorted(ascents, key=lambda a: a[1])]  # or name the part
 ```
 
-The first is shorter and says what it means. The second is what you want the
-moment somebody asks *which two riders*.
+The first is shorter and says what it means. The second keeps the riders, so
+use it if someone asks *which two riders*.
 
-**Ties are not a special case.** Two identical times give `later - earlier` of
-0, which is the smallest gap there can be, and `min` picks it up without being
-told. Code that tests for duplicates first is code that will get the empty
-board wrong instead.
+**Ties need no special case.** Two identical times give `later - earlier` of
+0, the smallest gap there can be, and `min` picks it up.
 
-**And the empty board.** `len(ascents) < 2` covers both `[]` and a single
-ascent. Skip it and `min` is handed an empty sequence and raises
-`ValueError: min() arg is an empty sequence` — a good error, in the wrong
-place.
+**The empty board.** `len(ascents) < 2` covers both `[]` and a single ascent.
+Without it, `min` is given an empty sequence for both, and it raises
+`ValueError`. That error is accurate, but it comes from the wrong place.
 :::

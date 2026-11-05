@@ -33,9 +33,9 @@ timeout = 5
 +++
 
 :::statement
-A kitchen writes down, night after night, how many meals it actually served.
-It wants a log of the nights that fell short of what it aimed for, so it can
-see whether the shortfalls are drifting or clustered.
+A kitchen records how many meals it served each night. It wants a log of the
+nights that fell short of its target, so it can see whether the shortfalls are
+drifting or clustered.
 
 Write `log_shortfalls(served, target=180, log=None)`.
 
@@ -49,8 +49,8 @@ For every night that served fewer than `target` meals, add the pair
 `served`, counting from 0. A night that hit the target exactly did not fall
 short.
 
-Return the log. When the caller passed one in, hand back *that* list — theirs,
-added to, not a copy of it.
+Return the log. When the caller passed one in, return *that* list with the
+new entries added, not a copy of it.
 :::
 
 :::io
@@ -63,7 +63,7 @@ output: the log: a list of `(night, shortfall)` pairs, oldest first
 - `0 <= served[i] <= 1,000,000`
 - `1 <= target <= 1,000,000`
 - Two calls that pass no `log` must not be able to see each other's entries.
-- When a `log` is passed, the list handed back must be that same list object.
+- When a `log` is passed, the list returned must be that same list object.
 :::
 
 :::sample
@@ -83,29 +83,25 @@ output: the log: a list of `(night, shortfall)` pairs, oldest first
 
 :::hint{level=1}
 One pass over `served`, and you need the position as well as the value.
-`enumerate` hands you both.
+`enumerate` gives you both.
 :::
 
 :::hint{level=2}
-`def log_shortfalls(served, target=180, log=[])` looks like the obvious way to
-say "an empty log by default". It is the bug this challenge is built around.
-That list is made once, when the `def` line runs, so every call that leaves
-`log` out shares the same one — and the edge tier calls the function twice
-with no log.
+`def log_shortfalls(served, target=180, log=[])` looks like a way to say "an
+empty log by default". But that list is made once, when the `def` line runs.
+Every call that leaves `log` out then shares the same list. The edge tier
+calls the function twice with no log.
 :::
 
 :::hint{level=3}
 Put `None` in the default and build the list inside, under `if log is None:`.
-That gives a fresh list per call, which is what "no log given" is supposed to
-mean. Use `is None`, not `== None` or `if not log:` — a caller may legitimately
-hand you an empty list they want back.
+That gives each call its own new list. Use `is None`, not `== None` or
+`if not log:`. A caller may pass an empty list and want it back.
 :::
 
 :::hint{level=4}
-`log = log + [entry]` builds a new list every night. It breaks the promise to
-return the caller's own list, and over 100,000 nights it copies billions of
-entries. `log.append(entry)` changes the list where it stands and copies
-nothing.
+`log = log + [entry]` builds a new list every night, so the caller's own list
+is not the one returned. `log.append(entry)` changes the list in place.
 :::
 
 :::solution
@@ -120,39 +116,37 @@ def log_shortfalls(served, target=180, log=None):
 ```
 
 **The default is settled once.** Python runs the `def` line once, when the
-module loads, and whatever object it builds for a default is *the* default from
-then on. For `target=180` that is harmless: 180 is a number and nothing can
-change it. For `log=[]` it means every call that omits a log appends to the
-same list — a log that quietly grows for as long as the program runs, mixing
-one kitchen's nights with another's. Nothing crashes. The numbers are just
-wrong, and they get more wrong the longer the program stays up.
+module loads. Whatever object it builds for a default is used by every call
+after that. For `target=180` that is harmless, because a number can't be
+changed. For `log=[]`, every call that leaves out the log appends to the same
+list. That list keeps growing for as long as the program runs, and mixes one
+kitchen's nights with another's. Nothing crashes, but the numbers get
+more wrong the longer the program runs.
 
-**`None` is the standard stand-in.** It carries no data and nothing can be
-appended to it, so a mistake shows up as an `AttributeError` immediately rather
-than as a slow leak. One `if` at the top turns it into a fresh list per call.
+**`None` is the standard stand-in.** It holds no data and you can't append to
+it. So a mistake shows up at once as an `AttributeError`, not as a slow leak.
+One `if` at the top replaces it with a new list for each call.
 
-**`is None` rather than truth.** `if not log:` looks tidier and is wrong: an
-empty list is falsy, so a caller who handed you `[]` to fill would get a
-different list back and never see their entries. `is None` asks the question
-you actually meant — *was I given nothing* — rather than *is what I was given
-empty*.
+**`is None` rather than truth.** `if not log:` looks tidier but is wrong. An
+empty list is falsy, so a caller who passed `[]` to fill would get a different
+list back and never see their entries. `is None` asks *was I given nothing*,
+not *is what I was given empty*.
 
 **Append, do not rebuild.** `log = log + [entry]` makes a new list holding
-everything so far plus one. Do that for every short night and the work grows
-with the square of the nights: at 100,000 nights, roughly five billion entries
-copied. It also re-points `log` at something new, so the caller's list is
-returned unchanged and the promise in the statement is broken. `append` fixes
-both at once, which is why the edge tier catches it before the perf tier gets
-the chance.
+everything so far plus one. Doing that for every short night makes the work
+grow with the square of the nights: at 100,000 nights, roughly five billion
+entries copied. It also points `log` at a new list, so the caller's list stays
+unchanged and a different list is returned. `append` fixes both. The edge
+tier checks that the caller's list comes back, so it catches this before the
+perf tier does.
 
-**Why the position comes from `enumerate`.** `served.index(meals)` would find
-the *first* night with that many meals, so two equally bad nights would both be
-logged against the earlier one. The position is a fact about where you are in
-the walk, not a fact about the value, and `enumerate` is how you keep hold of
-it.
+**Why the position comes from `enumerate`.** `served.index(meals)` finds the
+*first* night with that many meals, so two nights with the same count would
+both be logged at the earlier position. The position comes from where you are
+in the loop, not from the value. `enumerate` keeps track of it.
 
-**One thing, so it composes.** The function records and returns; it does not
-print, and it does not decide what a bad night means. That is why the same
-function serves a single week and a whole year's rolling log — the caller
-passes the log along, and the function never needs to know which it is in.
+**It does one thing.** The function records and returns. It does not print,
+and it does not decide what a bad night means. So the same function works for
+a single week or a whole year's rolling log. The caller passes the log along,
+and the function doesn't need to know which case it is in.
 :::

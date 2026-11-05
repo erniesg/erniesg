@@ -34,8 +34,8 @@ timeout = 5
 :::statement
 Add two single-digit numbers and return the result.
 
-There is no algorithm to find here. This one is about reading the problem text
-exactly, because everything later in the book assumes you can.
+There is no algorithm to find here. This one is about reading the problem
+text exactly, which every later challenge relies on.
 :::
 
 :::io
@@ -69,8 +69,8 @@ def sum_of_two_digits(a, b):
     return a + b
 ```
 
-The whole lesson is above the code. The statement fixes what arrives (two
-numbers, each 0 to 9) and what must leave (one number). Nothing has to guard
-against huge values or text input, because the constraints rule them out — and
-nothing may decorate the answer, because the output line says a number.
+The lesson is in the text above the code. The statement says what comes in
+(two numbers, each 0 to 9) and what goes out (one number). The constraints
+rule out huge values and text, so the code needs no checks for them. The
+output line says a number, so the answer has no added words.
 :::

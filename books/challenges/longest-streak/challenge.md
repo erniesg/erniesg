@@ -36,12 +36,11 @@ timeout = 10
 Someone learning a language ticks off each day they practised. Over 60 days
 they want one number: the longest run of days in a row with a tick.
 
-The starter already has an answer written. It is wrong, and the tests will
-tell you how. Your job is to find out why, not to rewrite it from nothing.
+The starter already has an answer written. It is wrong, and the tests show
+how. Find out why rather than starting again.
 
-Run it first and read what fails. Then make it talk: a `print` inside the loop
-showing the day, the run so far, and the best run seen. The line that lies to
-you is the bug.
+Run it first and read what fails. Then add a `print` inside the loop that shows
+the day, the run so far, and the best run so far.
 :::
 
 :::io
@@ -66,16 +65,16 @@ output: the length of the longest unbroken run of `True`, as a whole number
 :::
 
 :::figure{id="stepping-a-loop"}
-Print the run so far on every pass and the wrong line names itself.
+Print the run so far on every pass, and the wrong line shows up.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-Start with the sample the starter gets *right*: `[True, True, False, True]`
-gives 2. Now `[True, True, True]` gives 0. Both are all-`True` at some point,
-so what does the first one do that the second never does?
+Start with a sample the starter gets *right*: `[True, True, False, True]`
+gives 2. Now `[True, True, True]` gives 0. Both start with a run of `True`.
+What comes after the run in the first list but not in the second?
 :::
 
 :::hint{level=2}
@@ -85,15 +84,14 @@ Put this inside the loop and run the two samples again:
 print("ran", ran, "current", current, "best", best)
 ```
 
-On `[True, True, True]` the value of `best` never changes. Find the line that
-would have changed it and ask when that line runs.
+On `[True, True, True]`, `best` never changes. Find the line that changes it
+and check when that line runs.
 :::
 
 :::hint{level=3}
 `best` is only updated when a `False` arrives. A run that reaches the end of
 the list never meets one. Either compare inside the `if ran:` branch, or
-compare once more after the loop finishes — both work, and one of them is
-shorter.
+compare once more after the loop finishes. Both work.
 :::
 
 :::solution
@@ -111,24 +109,24 @@ def longest_streak(days):
     return best
 ```
 
-**What the bug actually was.** The original only compared `current` against
-`best` when a `False` came along. That reads fine — "the run just ended, so
-see if it was the best" — and it is right for every run except the last one.
-A list that ends on `True` ends without a `False`, so the final run is counted
-and then thrown away. `[True, True, True]` returned 0 while `current` sat at 3.
+**What the bug was.** The starter only compared `current` with `best` when a
+`False` came along: "the run just ended, so see if it was the best". That
+works for every run except the last. A list that ends on `True` has no `False`
+after its last run, so that run is never compared. `[True, True, True]`
+returned 0 while `current` was 3.
 
-**Why a print finds it faster than reading does.** Reading the code shows you
-what you meant. Printing `current` and `best` on every pass shows you what
-happened: `current` climbing 1, 2, 3 while `best` stays 0. The gap between
-those two columns *is* the bug, and it is visible in one screen.
+**Why a print finds it faster than reading.** Reading the code shows you what
+you meant it to do. Printing `current` and `best` on every pass shows what it
+did: `current` goes 1, 2, 3 while `best` stays 0. That gap between the two
+values is the bug.
 
-**The fix that has no end case.** Comparing inside the `if ran:` branch means
-`best` is brought up to date the moment `current` moves. There is no "and also
-afterwards" to forget. The other repair — one more comparison after the loop —
-is equally correct and gives you a second place to forget something the next
-time you edit this function.
+**The fix with no special case at the end.** Comparing inside the `if ran:`
+branch updates `best` as soon as `current` changes. Nothing needs to happen
+after the loop. The other fix, one more comparison after the loop, also works.
+But it puts the comparison in two places, and the next edit has to keep both.
 
-**Why the perf tier is here.** The obvious slow way to solve this is to try
-every span of days and ask whether it is all `True`. That is right, and on
-200,000 days it will still be running tomorrow. One pass, one counter.
+**Why the perf tier is here.** A slow way to solve this is to try every span
+of days and check whether it is all `True`. That is correct, but on 200,000
+days it would still be running tomorrow. One pass with one counter is
+enough.
 :::

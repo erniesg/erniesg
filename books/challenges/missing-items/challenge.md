@@ -33,10 +33,10 @@ timeout = 20
 +++
 
 :::statement
-A repair café opens on Saturday mornings: people bring broken bicycles and
+A repair café opens on Saturday mornings. People bring broken bicycles and
 volunteers fix them. Before the session the mechanics read out every part the
-day's bikes need — inner tubes twice, because two bikes came in with flats —
-and one volunteer cycles to the shop with the list.
+day's bikes need. Inner tubes come up twice, because two bikes came in with
+flats. Then one volunteer cycles to the shop with the list.
 
 Given what was asked for and what is already in the parts bin, return the
 shopping list: every requested part that is not in the bin, in the order it was
@@ -52,9 +52,9 @@ output: a list of the parts to buy, in first-asked order, no repeats
 :::constraints
 - `requested` holds 0 to 200,000 names; `stocked` holds 0 to 200,000 names.
 - Each name is 1 to 20 lowercase letters.
-- Both lists may repeat a name. The bin is in no order at all.
-- The answer is a list, and its order is the order parts were first requested.
-- At those sizes, searching the bin list for every request is too slow to pass.
+- Both lists may repeat a name. The bin is in no particular order.
+- The answer is a list, in the order parts were first requested.
+- At these sizes, searching the bin list for every request is too slow to pass.
 :::
 
 :::sample
@@ -67,30 +67,28 @@ output: a list of the parts to buy, in first-asked order, no repeats
 :::
 
 :::figure{id="lookup-vs-scan"}
-Every request is one membership question. Ask a set, not a list.
+Each request asks whether a name is in the bin. Ask a set, not a list.
 :::
 
 :::run{starter="starter.py"}
 :::
 
 :::hint{level=1}
-`name in stocked` gives the right answer, but on a list it reads the names one
-at a time. 200,000 requests against 200,000 parts in the bin is 40 billion
-comparisons. Turn the bin into a `set` once, before the loop, and ask that
-instead.
+`name in stocked` gives the right answer, but on a list it checks the names one
+at a time. 200,000 requests against 200,000 parts is 40 billion comparisons.
+Turn the bin into a `set` once, before the loop, and ask that instead.
 :::
 
 :::hint{level=2}
-The shopping list may not repeat a name, so you also have to remember what you
-have already written down. A second set does that. Writing `if name not in
-answer` looks like the same thing, but it searches the list you are building —
-the trap from hint 1, one line further down.
+The shopping list may not repeat a name, so keep a second set of the names
+already written down. `if name not in answer` would search a list again: the
+one you are building.
 :::
 
 :::hint{level=3}
-The order is the order of `requested`, so walk `requested` once and append as
-you go. Do not sort, and do not build the answer out of a set: a set keeps no
-order you can rely on.
+The answer follows the order of `requested`, so walk `requested` once and
+append as you go. Don't sort, and don't build the answer from a set: a set
+keeps no order you can rely on.
 :::
 
 :::solution
@@ -108,20 +106,18 @@ def missing_items(requested, stocked):
 
 **Three containers, three jobs.** `in_bin` answers "do we already have this?".
 `listed` answers "have I written it down?". `answer` is the only one that keeps
-the order, because it is the only one the caller sees.
+the order, because it is the one the caller gets.
 
 **The arithmetic.** Building `in_bin` reads the bin list once: 200,000
-steps. The loop reads the request list once and asks two sets per name: another
-200,000 or so. Around 400,000 steps in total. The version with `name in
-stocked` on the plain list does 40 billion, which is the difference between
-instant and going home.
+steps. The loop reads the request list once and asks two sets per name: about
+another 200,000. Around 400,000 steps in total, against 40 billion for
+`name in stocked` on the plain list.
 
 **Why not a set for the answer.** `set(requested) - set(stocked)` is one line
-and gives the right *names*, in an order nobody controls — it may come out
+and gives the right *names*, but in no fixed order. It may come out
 differently on another machine. The statement asks for shopping-list order, and
-a list is what keeps it.
+a list keeps it.
 
-**The case the sample nearly hides.** A missing name asked for twice must
-appear once. That is what `listed` is for, and it is the one the edge tier
-checks hardest.
+**A missing name asked for twice.** It must appear once. That is what `listed`
+is for, and the edge tier tests it.
 :::

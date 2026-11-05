@@ -33,13 +33,13 @@ timeout = 5
 +++
 
 :::statement
-A bill comes to some number of cents and a group wants to split it evenly.
+A group wants to split a bill evenly. The bill is a whole number of cents.
 Nobody can pay a fraction of a cent, so each person pays a whole number of
-cents and whatever is left over is handled by one person.
+cents. One person covers whatever is left over.
 
 Return two numbers: what each person pays, and how many cents are left over.
 
-If nobody is there to pay, there is nothing to work out. Return `(0, 0)`.
+If nobody is there to pay, return `(0, 0)`.
 :::
 
 :::io
@@ -70,8 +70,8 @@ output: a pair — cents each, and cents left over
 :::
 
 :::hint{level=1}
-Ordinary division gives you `25.25`, which nobody can pay. You want the whole
-part and the remainder as two separate numbers.
+`101 / 4` gives `25.25`, which nobody can pay. You want the whole part and
+the remainder as two separate numbers.
 :::
 
 :::hint{level=2}
@@ -80,8 +80,8 @@ part and the remainder as two separate numbers.
 :::
 
 :::hint{level=3}
-Dividing by zero raises `ZeroDivisionError`, so the no-people case has to be
-answered before you divide, not after.
+Dividing by zero raises `ZeroDivisionError`, so check for no people before
+you divide.
 :::
 
 :::solution
@@ -92,17 +92,15 @@ def split_bill(cents, people):
     return (cents // people, cents % people)
 ```
 
-**Why two operators.** `cents / people` returns a float — `101 / 4` is `25.25`
-— and a float cannot say "twenty-five each and one left in the tin". `//` and
-`%` answer the two halves of the real question: how many whole cents fit each
-person, and what is stranded.
+**Why two operators.** `cents / people` returns a float: `101 / 4` is `25.25`.
+A float can't say "25 cents each and one cent left over". `//` gives the whole
+cents each person pays, and `%` gives the cents left over.
 
-**Why the guard comes first.** Python raises `ZeroDivisionError` the moment you
-divide by zero, so no amount of tidying afterwards helps. The edge tier checks
-this directly, because "what if there is nobody" is exactly the case a sample
-never shows.
+**Why the guard comes first.** Python raises `ZeroDivisionError` as soon as
+you divide by zero, so the check has to run before the division. The edge tier
+tests it with 0 and 999 cents.
 
-**Where the remainder goes.** This function only reports the leftover; it does
-not decide who pays it. Keeping that decision out of the arithmetic is what
-lets the same function serve a till, a rota and a scoreboard.
+**Where the remainder goes.** This function only reports the leftover. It
+does not decide who pays it. Because that decision is left to the caller, the
+same function can serve a till, a rota and a scoreboard.
 :::

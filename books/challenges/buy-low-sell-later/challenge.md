@@ -40,8 +40,8 @@ that is 200,000 readings, oldest first.
 Buy at one reading, sell at a later one. What is the biggest gain you could
 have made?
 
-If the price never rises after any reading — or there is nothing to work with —
-the answer is 0. You cannot sell before you buy.
+If the price never rises after any reading, or there are no readings, the
+answer is 0. You cannot sell before you buy.
 :::
 
 :::io
@@ -65,8 +65,8 @@ output: the largest `prices[later] - prices[earlier]` where `earlier` comes befo
 :::
 
 :::figure{id="four-shapes"}
-Every pair of readings at 200,000 is the bottom row of this table. One pass is
-the row two above it.
+Comparing every pair of readings at 200,000 is the bottom row of this table.
+One pass is two rows above it.
 :::
 
 :::run{starter="starter.py"}
@@ -75,30 +75,29 @@ the row two above it.
 :::hint{level=1}
 Do the arithmetic before you write anything. Checking every earlier reading
 against every later one is 200,000 × 200,000 ÷ 2, which is 20 billion steps.
-At ten million steps a second that is 2,000 seconds. Suppose the rule is three
-times too gloomy and it is really ten minutes: the perf tier gives you three
-seconds. The answer has to be a single pass — one loop, with no loop inside
+At ten million steps a second that is 2,000 seconds. Even if the rule is three
+times too pessimistic, that is about ten minutes, and the perf tier gives you three
+seconds. So the answer has to be a single pass: one loop, with no loop inside
 it.
 :::
 
 :::hint{level=2}
-Walk the readings once, oldest to newest. At each reading, ask: if I sold
-right now, what is the most I could have made? That question has exactly one
-answer, and it depends on one thing you have already seen.
+Walk the readings once, oldest first. At each reading, ask: if I sold now,
+what is the most I could have made? The answer depends on one thing
+you have already seen.
 :::
 
 :::hint{level=3}
-The thing to remember as you go is the cheapest price so far. Today's best
-possible gain is today's price minus that. Keep the largest gain you have
-seen, and update the cheapest price afterwards — or you will let yourself buy
-and sell in the same minute.
+Keep track of the cheapest price so far. Today's best possible gain is today's
+price minus that. Keep the largest gain you have seen. Update the cheapest
+price after working out the gain, not before.
 :::
 
 :::hint{level=4}
-`max(prices) - min(prices)` is the answer that everybody writes first and it is
-wrong. Try it on `[9, 1]`: the largest price is 9, the smallest is 1, and it
-reports a gain of 8 on a phone that only got cheaper. The sell has to come
-after the buy, and `max` and `min` know nothing about order.
+`max(prices) - min(prices)` does not work. Try it on `[9, 1]`: the largest
+price is 9 and the smallest is 1, so it reports a gain of 8 on a phone that
+only got cheaper. The sell has to come after the buy, and `max` and `min`
+ignore order.
 :::
 
 :::solution
@@ -117,27 +116,24 @@ def best_gain(prices):
     return best
 ```
 
-**The idea.** For any reading you might sell at, the best partner is the
-cheapest reading anywhere before it. You do not have to search for it: walk
-forwards and it is already in your hand. That turns 20 billion comparisons into
-200,000, which is the whole lesson of this chapter in one function.
+**The idea.** For any reading you might sell at, the best reading to have
+bought at is the cheapest one before it. Walk forwards, remembering the
+cheapest so far, and you never have to search for it. That
+turns 20 billion comparisons into 200,000.
 
-**Why the order of those last two `if`s matters.** Score the sale first, then
-update the cheapest. Do it the other way round and a new low price becomes
-"the cheapest so far" and is then sold at itself, which is a gain of 0 — no
-harm on this problem, but on the next variant it is the bug where you buy and
-sell in the same minute. Get into the habit of asking which readings a step is
-allowed to see.
+**The order of the last two `if`s.** Score the sale first, then update the
+cheapest. The other way round, a new low price is sold at itself, for a gain
+of 0. That does no harm here, but on a variant of this problem it would let you
+buy and sell in the same minute.
 
-**Counting it.** One pass, two comparisons and at most two assignments per
-reading. At 200,000 readings that is well under a million steps, and it
-measures at a few thousandths of a second. The every-pair version is right
-too, and it does not finish.
+**Counting it.** One pass does two comparisons and at most two assignments
+per reading. At 200,000 readings that is well under a million steps, and it
+measures at a few thousandths of a second. The every-pair version is also
+correct, but it does not finish in time.
 
-**What the tiers are checking.** Edge holds `[9, 1]` and a list where the
-highest price comes before the lowest, because `max - min` passes the public
-samples. Stress races you against the every-pair version on lists of five
-numbers, where slow is free and being right is the only thing that counts.
-Perf runs one list of 200,000, where the every-pair version is stopped by the
-clock rather than by being wrong.
+**What the tiers check.** `max - min` passes the public samples. So the edge
+tier holds `[9, 1]` and a list where the highest price comes before the
+lowest. Stress checks your answer against the every-pair version on small
+lists. Perf runs one list of 200,000, where the
+every-pair version runs out of time.
 :::

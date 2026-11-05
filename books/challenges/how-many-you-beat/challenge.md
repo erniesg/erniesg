@@ -34,18 +34,18 @@ timeout = 20
 
 :::statement
 The same hill climb, run as an open challenge all season. Anybody can ride it
-whenever they like and the box at the top records the time. The board now holds
-200,000 ascents.
+at any time, and the box at the top records the time. The board now
+holds 200,000 ascents.
 
-The club emails everyone a card at the end of the season, and on the card is
-one line: *you were faster than N of this season's ascents.* Every rider gets
-one, so the number has to be worked out for every entry on the board.
+At the end of the season the club emails everyone a card with one line: *you
+were faster than N of this season's ascents.* Every rider gets one, so you
+need N for every entry on the board.
 
 Equal times beat nobody. If four people all climbed it in exactly 6:32, none of
-them was faster than another, and all four cards say the same number.
+them beat another, and all four cards show the same number.
 
-Return the counts in the same order as the ascents you were given, because
-that is the order the envelopes are printed in.
+Return the counts in the same order as the ascents you were given. That is the
+order the envelopes are printed in.
 :::
 
 :::io
@@ -73,7 +73,7 @@ output: a list of the same length, where position `i` holds how many entries hav
 :::
 
 :::figure{id="counting-the-field"}
-Times are whole numbers with a ceiling, which means a time can be a place.
+Times are whole numbers with a known maximum, so each time can be a position in a list.
 :::
 
 :::run{starter="starter.py"}
@@ -97,30 +97,29 @@ def riders_you_beat(times):
     return [chalk[value] for value in times]
 ```
 
-**Count it before anything else.** Asking "how many are below this one?" for
-each rider means reading the whole board for each rider: 200,000 × 200,000 =
-40 billion comparisons. The ten-million rule says 4,000 seconds; measured, it
-is around twelve minutes. The tier gives three seconds. So the per-rider scan
-is out before you have typed it.
+**Count the cost first.** Asking "how many are below this one?" for each
+rider reads the whole board once per rider: 200,000 × 200,000 = 40
+billion comparisons. The ten-million rule says 4,000 seconds. Measured, it is
+around twelve minutes. The tier allows three seconds, so the per-rider scan
+cannot pass.
 
 **The idea.** Chalk a patch of grass for every time from 0 up to the slowest on
 the board, and count how many ascents landed on each. Then walk along the chalk
-from fastest to slowest keeping a running total of everybody you have passed.
-When you reach a patch, that running total *is* the number of ascents strictly
-faster than it — so overwrite the count with it. After that walk, the answer
-for any rider is one lookup: go to their time and read what is written there.
+from fastest to slowest, keeping a running total of everybody you have passed.
+When you reach a patch, the running total is the number of ascents strictly
+faster than it, so write that total over the count. After this walk, each
+rider's answer is one lookup: read the patch at their time.
 
-Three passes, none of them inside another: one over the board, one along the
-chalk, one over the board again. That is n + k + n, and with n = 200,000 and
-k at most 1,000,001 it measures at under three hundredths of a second.
+That is three passes, none inside another: over the board, along the chalk,
+and over the board again, so n + k + n steps. With n = 200,000 and k at most
+1,000,001, it measures at under three hundredths of a second.
 
-**Why the running total has to be added *after* it is written down.** At each
-patch you store `faster` first and only then add the riders standing on that
-patch. Add first and every rider counts themselves and everyone who tied with
-them, which is exactly the "strictly" the statement keeps insisting on. Swap
-those two lines and `[500, 500, 500]` answers `[3, 3, 3]`.
+**Why the total is written down *before* the patch's riders are added.** If
+you add first, every rider counts themselves and everyone who tied with them.
+That breaks the "strictly smaller" rule. Swap those two lines and
+`[500, 500, 500]` returns `[3, 3, 3]`.
 
-**The other answer, and it also passes.** Sorting works too:
+**Another answer that also passes.** Sorting works too:
 
 ```python
 def riders_you_beat(times):
@@ -131,20 +130,19 @@ def riders_you_beat(times):
     return [first_at[value] for value in times]
 ```
 
-Once the times are in order, the number of entries strictly faster than a given
-time is simply the position where that time *first* appears. `if value not in
-first_at` keeps the first one and ignores the rest of a tie, which is the same
-"strictly" rule wearing different clothes.
+Once the times are in order, the number of entries strictly faster than a
+given time is the position where that time *first* appears. `if value not in
+first_at` keeps the first position and ignores the rest of a tie. That is the
+same "strictly smaller" rule, written another way.
 
-This costs n log n rather than n + k, and it measures at about four hundredths
-of a second against the counting version's two and a half — near enough that
-nobody would notice, because the sort happens in C while the counting loops in
-Python. Both are right. Which one is better depends entirely on k. At times up
-to a million, counting is ahead. If times could run to a billion, the counting
-version would try to chalk a billion patches of grass and the sort would not
-care at all.
+This costs n log n rather than n + k. It measures at about four hundredths of
+a second, against two and a half hundredths for the counting version. The gap
+is small because the sort runs in C, while the counting loops run in Python.
+Which is better depends on k. At times up to a million,
+counting is ahead. If times could run to a billion, the counting version would
+chalk a billion patches of grass, while the sort would take no longer.
 
-**The empty board.** `max([])` raises `ValueError`, so the empty case needs one
-line at the top — or a `sorted` version, which never needs `max` and handles it
-without being asked. That is a fair reason to prefer it.
+**The empty board.** `max([])` raises `ValueError`, so the counting version
+needs one line at the top for the empty case. The `sorted` version never calls
+`max`, so it needs no special case. That is a fair reason to prefer it.
 :::

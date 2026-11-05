@@ -47,8 +47,7 @@ ten-minute debug attached.
 
 `.sort()` exists because it needs no second list. Sorting 200,000 riders with
 `sorted` briefly holds two copies of them; `.sort()` holds one. That matters
-about twice a year. The rest of the time, use `sorted` and hand back a new
-list.
+about twice a year. The rest of the time, use `sorted` and return a new list.
 
 ## The key is worked out once per rider
 
@@ -101,7 +100,7 @@ comparing two tuples starts at the first item and only moves on when that item
 ties. Sort a list of pairs without saying which part you mean and the part you
 did not think about decides everything.
 
-Turn it round and the same rule is a tool: hand back a tuple as your key and
+Turn it round and the same rule is a tool: return a tuple as your key and
 you have said "order by this, and settle ties with that". Chapter 10 used it
 for exactly that.
 
@@ -293,10 +292,9 @@ Back to the field at the finish. Forget the timing file and picture the riders
 themselves, standing on the grass, each holding a card with their lap count on
 it — a whole number between 0 and 120. Put them in order.
 
-You could pair them off and compare cards until the line came right. Or you
-could take the chalk, write 0 to 120 across the grass in a line, one patch each, and
-tell everybody to go and stand on their own number. Read the field from left to
-right and it is sorted. No rider was ever held up against another rider.
+You could compare pairs of cards until the line came right. Or create one count
+for each number from 0 to 120. Reading those counts from left to right produces
+the values in order, without comparing riders.
 
 :::figure{id="counting-the-field"}
 :::

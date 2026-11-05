@@ -67,8 +67,7 @@ output: a new list of text: the trimmed, non-blank entries, in their original or
 :::
 
 :::figure{id="six-idioms"}
-Building a new list is the first habit in this list, and the only one here
-that is about correctness rather than reading.
+Build a new list so the caller's list stays unchanged.
 :::
 
 :::run{starter="starter.py"}
@@ -110,11 +109,8 @@ def tidy_names(names):
     return [name.strip() for name in names if name.strip()]
 ```
 
-**Why this cannot touch the caller's list.** A comprehension reads `names` and
-builds somewhere else. There is no assignment into `names` and no method call
-on it, so the list the club is holding comes back byte for byte as it went in.
-That is the whole contract, and it falls out of the shape of the code rather
-than being something you have to remember.
+**The comprehension leaves `names` unchanged.** It reads `names` and builds a
+new list. It does not assign into `names` or call a method on it.
 
 **Why `if name.strip()` and not `if name != ""`.** An entry of three spaces is
 not equal to `""`, so the second test keeps it, and you end up with a name made

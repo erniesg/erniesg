@@ -36,7 +36,7 @@ print(trays_needed(310))
 whatever the caller passes in; on the third call it is 310. It exists only
 inside the function.
 
-`return` hands a value back to the caller. `(portions + 11) // 12` rounds up:
+`return` sends a value back to the caller. `(portions + 11) // 12` rounds up:
 adding 11, one less than a full tray, pushes any leftover into the next tray.
 310 + 11 is 321, and 321 // 12 is 26.
 
@@ -78,7 +78,7 @@ print(answer)
 ```
 
 `show_trays` put 26 on the screen and returned nothing. A function without
-`return` hands back `None`, Python's value for nothing.
+`return` returns `None`, Python's value for nothing.
 
 Printing shows a value to a person. Returning gives it to the rest of the
 program, which can then add it, compare it or pass it on:
@@ -135,9 +135,9 @@ print(trays_needed(0), trays_needed(1), trays_needed(12), trays_needed(13))
 Zero portions needs no trays, one needs a whole tray, 12 fits exactly and 13
 needs a second. To check `show_trays` you would have to capture what it printed.
 
-A function that also writes a file or prints a summary only fits the one place
-it was written for. A function that takes values and returns one fits anywhere,
-including a test.
+A function that also writes a file or prints a summary is harder to reuse. A
+function that takes values and returns one can be called from other code and
+tested on its own.
 
 ## Default arguments
 

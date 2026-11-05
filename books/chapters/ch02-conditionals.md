@@ -31,7 +31,7 @@ print(level < 2.10)
 ```
 
 Six operators ask questions: `>`, `<`, `>=`, `<=`, `==` for "is it the same"
-and `!=` for "is it different". Each one hands back a `bool`.
+and `!=` for "is it different". Each one returns a `bool`.
 
 ## if runs a block, or skips it
 
@@ -89,9 +89,8 @@ reading of 3.62 m passes all three tests, and it gets the worst message
 because that rung is asked first. Put the 2.10 rung at the top instead and the
 two below it can never be reached at all.
 
-`else` is the rung with no test, and it catches everything that reached it.
-Leave it out and a value that matches nothing simply falls off the bottom
-having done nothing, which is a bug that makes no noise.
+`else` is the rung with no test, and it handles everything that reached it.
+Without it, a value that matches nothing produces no result.
 
 :::exercise{id="ch02-pool-price"}
 The pool charges 2 under the age of 12, 5 from 12 to 64, and 3 from 65 up.
@@ -197,7 +196,7 @@ print(approved)
 ```
 :::
 
-## Values that answer the question by themselves
+## When zero is a valid reading
 
 Anything can be used where Python expects a yes or no. Empty things are no.
 
@@ -209,8 +208,7 @@ print(bool(None))
 ```
 
 So `if readings:` reads as "if there are any readings at all", which is the
-usual way to write it. Note what joined the falses: `0`. Zero is empty in the
-same way as an empty list, and that is the trap.
+usual way to write it. `0` is also false, like an empty list.
 
 ```python run
 level = 0.0

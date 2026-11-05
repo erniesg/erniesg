@@ -36,8 +36,7 @@ timeout = 5
 A ticket machine works out change: you give it a price and the amount the
 customer put in, both in cents, and it tells you what to hand back.
 
-Three things can arrive that have no answer, and the machine must say so
-rather than invent a number.
+Some inputs cannot produce change. Raise an error for each one.
 
 - An amount that is not a whole number — `"250"` off a keypad, or `2.5` from a
   division — is the wrong **kind** of value. Raise `TypeError`.
@@ -46,8 +45,7 @@ rather than invent a number.
 - Paying less than the price is also an impossible value: there is no change
   to give. Raise `ValueError`.
 
-Every error you raise must carry a message. An error with nothing in it is
-barely better than no error at all.
+Include a message with every error so the caller can see what went wrong.
 :::
 
 :::io
@@ -112,25 +110,19 @@ def change_owed(price_cents, paid_cents):
     return paid_cents - price_cents
 ```
 
-**Kind before value.** `isinstance` runs first because every later line assumes
-it can compare the arguments to numbers. Swap the order and `change_owed("250",
-500)` raises `TypeError: '<' not supported between instances of 'str' and
-'int'` — still a `TypeError`, but Python's, pointing at your comparison instead
-of at the caller who passed text. The tests would pass and the message would be
-useless.
+**Check the kind first.** Every later line compares the arguments to numbers.
+If you swap the order, `change_owed("250", 500)` raises `TypeError: '<' not
+supported between instances of 'str' and 'int'`. That message points to the
+comparison instead of the text passed by the caller.
 
-**Why `2.5` is a `TypeError` and `-5` is a `ValueError`.** `2.5` is not the
-kind of thing cents are; no amount of arithmetic makes it one. `-5` *is* a
-whole number of cents, it is just not a possible one. That split is the
-convention the whole language follows, and following it means a caller who
-writes `except ValueError` catches the cases they can fix.
+**`2.5` and `-5` fail for different reasons.** `2.5` is not a whole number.
+`-5` is a whole number, but it is not a possible amount. This lets callers use
+`except ValueError` for values they can correct.
 
-**Why not return 0 when underpaid.** Because `0` is a real answer. It means
-"exact money, nothing to hand back", and the machine would be unable to tell
-the two apart. The edge tier checks `250, 250` gives `0` and `250, 200`
-raises, which is the same check written twice on purpose.
+**Do not return `0` when underpaid.** `0` already means the customer paid the
+exact amount. Use an error to keep the two cases distinct.
 
-**The message.** `f"paid {paid_cents} is less than the price {price_cents}"`
-puts both numbers in the traceback's last line. `raise ValueError()` with no
-message is legal and tells whoever reads the log nothing at all.
+**Include both amounts in the message.**
+`f"paid {paid_cents} is less than the price {price_cents}"` shows the price
+and payment in the traceback.
 :::

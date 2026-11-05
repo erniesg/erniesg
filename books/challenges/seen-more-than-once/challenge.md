@@ -80,10 +80,8 @@ def count_repeat_visitors(plates):
     return sum(1 for count in seen.values() if count > 1)
 ```
 
-**The count that decides it.** The obvious answer asks, for each plate, how
-many times that plate appears in the list — and asking that question means
-walking the list. 200,000 plates, each searching 200,000 reads, is 40 billion
-comparisons. The ten-million rule calls that 4,000 seconds.
+**Process all reads in one pass.** Searching the list for every plate makes 40 billion
+comparisons for 200,000 plates.
 
 Timed, it comes out nearer 500, because `plates.count(...)` does its walking
 inside Python's own machinery rather than in a loop you wrote, which is

@@ -119,10 +119,9 @@ def parse_setting(line):
     return (key, value.strip())
 ```
 
-**The order of the checks is the whole problem.** Strip first, because every
-rule below is about the stripped text. Then get rid of the lines that hold
-nothing, one reason at a time. Only then split, and only then look at the key
-you actually got.
+**Check in this order.** Strip first because every later rule uses the stripped
+text. Then return for empty lines, comments and lines without `=`. Split only
+after those checks, then validate the key.
 
 **Why `split("=", 1)`.** The second argument is the number of cuts. Without it,
 `"greeting = a = b"` comes back as three pieces and the natural next move —
@@ -138,6 +137,5 @@ human writing `PATH` and a human writing `path` mean the same thing.
 the caller the line was blank, and the backup would quietly keep its default of
 30 days when somebody had asked for none.
 
-**Three new strings, one original.** `line` is unchanged when you return. That
-is not politeness, it is the only thing a string will let you do.
+**The original line is unchanged.** String methods return new strings.
 :::

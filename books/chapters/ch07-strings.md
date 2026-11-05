@@ -36,7 +36,7 @@ print(len(name), "characters")
 ```
 
 `name[:6]` is "up to but not including position 6", the same half-open rule
-lists use. It is worth reading `[-3:]` out loud as "the last three".
+lists use. Read `[-3:]` as "the last three".
 
 :::exercise{id="ch07-name-and-extension"}
 Print the extension without its dot, then the file name without the
@@ -76,8 +76,8 @@ print(capital)
 print(name)
 ```
 
-The original is untouched, and that is the part people trip over. Every string
-method hands back a *new* string and leaves yours where it was:
+The original is untouched. Every string method returns a *new* string and
+leaves the original unchanged:
 
 ```python run
 print(name.replace(".md", ".txt"))

@@ -120,11 +120,8 @@ moment a variant of this problem allows negative numbers.
 allowed size, far inside the limit. Checking every pair instead would be 40
 billion multiplications, roughly an hour of Python.
 
-**The trap, plainly.** `max(numbers)` followed by "remove everything equal to
-that value" is the most common wrong answer, and the samples above will not
-catch it — neither one repeats a value. The edge tier does, with `[2, 2]`, and
-so does the stress tier within a handful of random lists. That gap between what
-an example shows you and what is actually true is the reason the tiers exist.
+**Keep duplicate values.** Removing every value equal to `max(numbers)` fails
+for `[2, 2]`. Neither public sample repeats a value, but the edge tier does.
 :::
 
 :::figure{id="two-biggest"}

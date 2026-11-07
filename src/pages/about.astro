@@ -8,7 +8,9 @@ import Layout from '@/layouts/Layout.astro'
 import { getStaticTranslation } from '@/lib/i18n'
 import { getCollection } from 'astro:content'
 
-const projects = await getCollection('projects')
+const projects = (await getCollection('projects')).sort(
+  (a, b) => (a.data.order ?? Infinity) - (b.data.order ?? Infinity),
+)
 const author = (await getCollection('authors')).find(author => author.id === 'erniesg')
 ---
 

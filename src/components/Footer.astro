@@ -10,9 +10,9 @@ import SocialIcons from './SocialIcons.astro'
 <footer class="py-4">
   <Container>
     <div
-      class="flex flex-col items-center justify-center gap-y-2 sm:flex-row sm:justify-between"
+      class="flex flex-col items-center justify-center gap-y-2 sm:flex-row sm:justify-between sm:gap-x-4"
     >
-      <div class="flex items-center gap-x-2">
+      <div class="flex items-center gap-x-2 sm:shrink-0">
         <span class="text-center text-sm text-muted-foreground">
           &copy; {new Date().getFullYear()}
           <span data-i18n-key="footer.rights"
@@ -32,7 +32,7 @@ import SocialIcons from './SocialIcons.astro'
           >
         </p>
       </div>
-      <nav aria-label="More" class="flex gap-x-4 text-sm">
+      <nav aria-label="More" class="flex gap-x-4 text-sm sm:shrink-0">
         <a href="/about" data-i18n-key="nav.about"
           >{getStaticTranslation('nav.about', 'en')}</a
         >
@@ -40,7 +40,13 @@ import SocialIcons from './SocialIcons.astro'
           >{getStaticTranslation('nav.tags', 'en')}</a
         >
       </nav>
-      <SocialIcons links={SOCIAL_LINKS} />
+      {
+        /* One line at every width: icons scroll sideways rather than wrap. The padding keeps focus rings unclipped. */
+      }
+      <SocialIcons
+        links={SOCIAL_LINKS}
+        className="w-fit min-w-0 max-w-full flex-nowrap overflow-x-auto p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&_li]:shrink-0"
+      />
     </div>
   </Container>
 </footer>

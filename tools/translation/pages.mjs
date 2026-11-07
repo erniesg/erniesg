@@ -734,11 +734,12 @@ function usableCachedTranslation(catalog, locale, segment) {
   const entry = catalog.translations?.[locale]?.[key]
   if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) return false
   // Native and author-owned wording is deliberately retained. Machine output
-  // must carry the same provider provenance that the publish bridge accepts.
+  // must carry the same provider provenance that the publish bridge accepts,
+  // or be tagged as written by Claude Code when Codex is unavailable.
   if (entry.status !== 'machine') return true
   const source = catalog.strings?.[key]
   return Boolean(
-    entry.provenance?.provider === 'codex-cli' &&
+    ['codex-cli', 'claude-code'].includes(entry.provenance?.provider) &&
       source?.sourceHash === entry.sourceHash &&
       typeof source.sourceText === 'string' &&
       sha256(source.sourceText) === entry.sourceHash &&

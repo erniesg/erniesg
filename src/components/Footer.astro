@@ -8,9 +8,9 @@ import SocialIcons from './SocialIcons.astro'
 ---
 
 <footer class="py-4">
-  <Container>
+  <Container class="max-w-screen-xl">
     <div
-      class="flex flex-col items-center justify-center gap-y-2 sm:flex-row sm:justify-between"
+      class="flex flex-col items-center justify-center gap-y-3 lg:flex-row lg:justify-between lg:gap-x-6"
     >
       <div class="flex items-center gap-x-2">
         <span class="text-center text-sm text-muted-foreground">
@@ -40,7 +40,11 @@ import SocialIcons from './SocialIcons.astro'
           >{getStaticTranslation('nav.tags', 'en')}</a
         >
       </nav>
-      <SocialIcons links={SOCIAL_LINKS} />
+      {/* One row at every width: the columns shrink on small phones instead of wrapping. */}
+      <SocialIcons
+        links={SOCIAL_LINKS}
+        className="grid w-full max-w-[23.5rem] grid-cols-8 gap-1 sm:gap-2 lg:w-[23.5rem] lg:shrink-0 [&_a]:aspect-square [&_a]:h-auto [&_a]:w-full"
+      />
     </div>
   </Container>
 </footer>

@@ -20,12 +20,11 @@ describe('published research and site sections', () => {
     expect(navLinks({ PUBLIC_RESEARCH_RELEASE: 'production' })).toEqual([
       { href: '/blog', label: 'blog' },
       { href: '/research', label: 'research' },
-      { href: '/atlas', label: 'atlas' },
       { href: '/about', label: 'about' },
       { href: '/tags', label: 'tags' },
     ])
   })
-  it('shows six sections plus About and Tags on development and preview', () => {
+  it('shows five sections plus About and Tags on development and preview', () => {
     for (const env of [{ DEV: true }, { PUBLIC_RESEARCH_RELEASE: 'staging' }]) {
       expect(navLinks(env).map(({ href }) => href)).toEqual([
         '/blog',
@@ -33,13 +32,12 @@ describe('published research and site sections', () => {
         '/research',
         '/library',
         '/projects',
-        '/atlas',
         '/about',
         '/tags',
       ])
     }
   })
-  it('localizes all six section labels', () => {
+  it('localizes all five section labels', () => {
     for (const locale of SUPPORTED_LOCALES) {
       for (const section of [
         'blog',
@@ -47,7 +45,6 @@ describe('published research and site sections', () => {
         'research',
         'library',
         'projects',
-        'atlas',
       ]) {
         const key = `nav.${section}`
         expect(getStaticTranslation(key, locale)).not.toBe(key)

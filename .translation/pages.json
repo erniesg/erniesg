@@ -5600,6 +5600,94 @@
     "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664": {
       "sourceText": "\nServer conversion: 10 MiB; 3 attempts/network/day, 20 total/day (UTC),\n      including failures. Links and completed files expire after 72h; pending\n      jobs remain until complete.\n",
       "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+    },
+    "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689": {
+      "sourceText": "Tong",
+      "sourceHash": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689"
+    },
+    "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7": {
+      "sourceText": " An immersive life sim for learning Mandarin, Korean and Japanese, with romance, GPT-powered characters and language minigames such as block crush puzzles. ",
+      "sourceHash": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7"
+    },
+    "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256": {
+      "sourceText": "Language learning",
+      "sourceHash": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256"
+    },
+    "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b": {
+      "sourceText": "Game",
+      "sourceHash": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b"
+    },
+    "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35": {
+      "sourceText": "GPT",
+      "sourceHash": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35"
+    },
+    "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a": {
+      "sourceText": "Spindle",
+      "sourceHash": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a"
+    },
+    "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179": {
+      "sourceText": " A time tracker that gives you time back by turning recurring chores, such as identity photo requirements and form filling, into automated routines. Available for macOS, Windows and Chrome. ",
+      "sourceHash": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179"
+    },
+    "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2": {
+      "sourceText": "Time tracking",
+      "sourceHash": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2"
+    },
+    "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64": {
+      "sourceText": "Automation",
+      "sourceHash": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64"
+    },
+    "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7": {
+      "sourceText": "macOS",
+      "sourceHash": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7"
+    },
+    "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10": {
+      "sourceText": "Windows",
+      "sourceHash": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10"
+    },
+    "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a": {
+      "sourceText": "Chrome",
+      "sourceHash": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a"
+    },
+    "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7": {
+      "sourceText": "Rucksack",
+      "sourceHash": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7"
+    },
+    "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489": {
+      "sourceText": " A friendly control plane for agents running on a VM, with built-in routing so work runs 24/7 without wasting tokens. ",
+      "sourceHash": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489"
+    },
+    "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee": {
+      "sourceText": "Agents",
+      "sourceHash": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee"
+    },
+    "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060": {
+      "sourceText": "Routing",
+      "sourceHash": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060"
+    },
+    "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6": {
+      "sourceText": "VM",
+      "sourceHash": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6"
+    },
+    "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7": {
+      "sourceText": "Paillette",
+      "sourceHash": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7"
+    },
+    "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae": {
+      "sourceText": " Makes artworks from the National Gallery Singapore and the National Gallery of Art searchable and discoverable, using a Reciprocal Rank Fusion search built with Codex. ",
+      "sourceHash": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae"
+    },
+    "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9": {
+      "sourceText": "Search",
+      "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9"
+    },
+    "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7": {
+      "sourceText": "Reciprocal Rank Fusion",
+      "sourceHash": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7"
+    },
+    "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c": {
+      "sourceText": "Codex",
+      "sourceHash": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c"
     }
   },
   "translations": {
@@ -15711,6 +15799,226 @@
         "text": "\n服务器转换：10 MiB；每个网络每天 3 次尝试，每天共 20 次（UTC），失败也计入。链接和已完成文件将在 72 小时后过期；待处理任务会保留至完成。\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689": {
+        "text": "Tong",
+        "status": "machine",
+        "sourceHash": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7": {
+        "text": " 一款沉浸式生活模拟游戏，边谈恋爱边学中文、韩语和日语：角色由 GPT 驱动，还有方块消除谜题等语言小游戏。 ",
+        "status": "machine",
+        "sourceHash": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256": {
+        "text": "语言学习",
+        "status": "machine",
+        "sourceHash": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b": {
+        "text": "游戏",
+        "status": "machine",
+        "sourceHash": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35": {
+        "text": "GPT",
+        "status": "machine",
+        "sourceHash": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a": {
+        "text": "Spindle",
+        "status": "machine",
+        "sourceHash": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179": {
+        "text": " 一款帮你把时间省回来的时间追踪工具：把证件照规格、填表这类反复出现的琐事变成自动化流程。支持 macOS、Windows 和 Chrome。 ",
+        "status": "machine",
+        "sourceHash": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2": {
+        "text": "时间追踪",
+        "status": "machine",
+        "sourceHash": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64": {
+        "text": "自动化",
+        "status": "machine",
+        "sourceHash": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7": {
+        "text": "macOS",
+        "status": "machine",
+        "sourceHash": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10": {
+        "text": "Windows",
+        "status": "machine",
+        "sourceHash": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a": {
+        "text": "Chrome",
+        "status": "machine",
+        "sourceHash": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7": {
+        "text": "Rucksack",
+        "status": "machine",
+        "sourceHash": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489": {
+        "text": " 一个好上手的控制平面，用来管理跑在 VM 上的智能体；内置路由，让工作全天候运转，又不浪费 token。 ",
+        "status": "machine",
+        "sourceHash": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee": {
+        "text": "智能体",
+        "status": "machine",
+        "sourceHash": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060": {
+        "text": "路由",
+        "status": "machine",
+        "sourceHash": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6": {
+        "text": "VM",
+        "status": "machine",
+        "sourceHash": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7": {
+        "text": "Paillette",
+        "status": "machine",
+        "sourceHash": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae": {
+        "text": " 让新加坡国家美术馆和美国国家美术馆的艺术品能被搜索、被发现，背后是用 Codex 构建的倒数排名融合（Reciprocal Rank Fusion）搜索。 ",
+        "status": "machine",
+        "sourceHash": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9": {
+        "text": "搜索",
+        "status": "machine",
+        "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7": {
+        "text": "倒数排名融合",
+        "status": "machine",
+        "sourceHash": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c": {
+        "text": "Codex",
+        "status": "machine",
+        "sourceHash": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
       }
     },
     "ja": {
@@ -23430,6 +23738,226 @@
         "text": "\nサーバー変換：10 MiB、ネットワークごとに1日3回まで、全体で1日20回まで（UTC、失敗分を含む）。リンクと完了済みファイルは72時間で失効し、保留中のジョブは完了まで保持されます。\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689": {
+        "text": "Tong",
+        "status": "machine",
+        "sourceHash": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7": {
+        "text": " 恋愛を楽しみながら中国語・韓国語・日本語を学べる没入型ライフシム。GPT で動くキャラクターに加え、ブロック消しパズルなどの語学ミニゲームも用意しています。 ",
+        "status": "machine",
+        "sourceHash": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256": {
+        "text": "語学学習",
+        "status": "machine",
+        "sourceHash": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b": {
+        "text": "ゲーム",
+        "status": "machine",
+        "sourceHash": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35": {
+        "text": "GPT",
+        "status": "machine",
+        "sourceHash": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a": {
+        "text": "Spindle",
+        "status": "machine",
+        "sourceHash": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179": {
+        "text": " 証明写真の規格確認や書類の記入といった繰り返しの雑務を自動化ルーティンに変えて、時間を取り戻すタイムトラッカー。macOS、Windows、Chrome に対応しています。 ",
+        "status": "machine",
+        "sourceHash": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2": {
+        "text": "タイムトラッキング",
+        "status": "machine",
+        "sourceHash": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64": {
+        "text": "自動化",
+        "status": "machine",
+        "sourceHash": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7": {
+        "text": "macOS",
+        "status": "machine",
+        "sourceHash": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10": {
+        "text": "Windows",
+        "status": "machine",
+        "sourceHash": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a": {
+        "text": "Chrome",
+        "status": "machine",
+        "sourceHash": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7": {
+        "text": "Rucksack",
+        "status": "machine",
+        "sourceHash": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489": {
+        "text": " VM 上で動くエージェントを手軽に扱えるコントロールプレーン。ルーティングを内蔵しているので、トークンを無駄にせず 24 時間作業を回し続けられます。 ",
+        "status": "machine",
+        "sourceHash": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee": {
+        "text": "エージェント",
+        "status": "machine",
+        "sourceHash": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060": {
+        "text": "ルーティング",
+        "status": "machine",
+        "sourceHash": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6": {
+        "text": "VM",
+        "status": "machine",
+        "sourceHash": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7": {
+        "text": "Paillette",
+        "status": "machine",
+        "sourceHash": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae": {
+        "text": " ナショナル・ギャラリー・シンガポールとワシントン・ナショナル・ギャラリーの所蔵作品を、検索して出会えるようにしました。検索には Codex で構築した Reciprocal Rank Fusion（逆順位融合）を使っています。 ",
+        "status": "machine",
+        "sourceHash": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9": {
+        "text": "検索",
+        "status": "machine",
+        "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7": {
+        "text": "逆順位融合",
+        "status": "machine",
+        "sourceHash": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c": {
+        "text": "Codex",
+        "status": "machine",
+        "sourceHash": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
       }
     },
     "ko": {
@@ -31013,6 +31541,226 @@
         "text": "\n서버 변환: 10 MiB, 네트워크당 하루 3회, 전체 하루 20회(UTC, 실패 포함)까지 시도할 수 있습니다. 링크와 완료된 파일은 72시간 후 만료되며, 대기 중인 작업은 완료될 때까지 유지됩니다.\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689": {
+        "text": "Tong",
+        "status": "machine",
+        "sourceHash": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7": {
+        "text": " 연애를 즐기며 중국어·한국어·일본어를 배우는 몰입형 라이프 시뮬레이션. GPT 기반 캐릭터와 블록 깨기 퍼즐 같은 언어 미니게임이 함께합니다. ",
+        "status": "machine",
+        "sourceHash": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256": {
+        "text": "언어 학습",
+        "status": "machine",
+        "sourceHash": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b": {
+        "text": "게임",
+        "status": "machine",
+        "sourceHash": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35": {
+        "text": "GPT",
+        "status": "machine",
+        "sourceHash": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a": {
+        "text": "Spindle",
+        "status": "machine",
+        "sourceHash": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179": {
+        "text": " 증명사진 규격 확인이나 서류 작성처럼 반복되는 잡무를 자동화 루틴으로 바꿔 시간을 되찾아 주는 시간 추적 앱. macOS, Windows, Chrome에서 쓸 수 있습니다. ",
+        "status": "machine",
+        "sourceHash": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2": {
+        "text": "시간 추적",
+        "status": "machine",
+        "sourceHash": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64": {
+        "text": "자동화",
+        "status": "machine",
+        "sourceHash": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7": {
+        "text": "macOS",
+        "status": "machine",
+        "sourceHash": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10": {
+        "text": "Windows",
+        "status": "machine",
+        "sourceHash": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a": {
+        "text": "Chrome",
+        "status": "machine",
+        "sourceHash": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7": {
+        "text": "Rucksack",
+        "status": "machine",
+        "sourceHash": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489": {
+        "text": " VM에서 돌아가는 에이전트를 손쉽게 다루는 컨트롤 플레인. 라우팅이 내장되어 있어 토큰을 낭비하지 않고 24시간 내내 작업을 돌립니다. ",
+        "status": "machine",
+        "sourceHash": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee": {
+        "text": "에이전트",
+        "status": "machine",
+        "sourceHash": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060": {
+        "text": "라우팅",
+        "status": "machine",
+        "sourceHash": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6": {
+        "text": "VM",
+        "status": "machine",
+        "sourceHash": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7": {
+        "text": "Paillette",
+        "status": "machine",
+        "sourceHash": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae": {
+        "text": " 싱가포르 국립미술관과 미국 국립미술관의 작품을 검색하고 발견할 수 있게 만든 프로젝트. Codex로 구현한 상호 순위 융합(Reciprocal Rank Fusion) 검색을 씁니다. ",
+        "status": "machine",
+        "sourceHash": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9": {
+        "text": "검색",
+        "status": "machine",
+        "sourceHash": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7": {
+        "text": "상호 순위 융합",
+        "status": "machine",
+        "sourceHash": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
+      },
+      "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c": {
+        "text": "Codex",
+        "status": "machine",
+        "sourceHash": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+        "provenance": {
+          "provider": "claude-code",
+          "model": "claude-opus-5-5",
+          "generatedAt": "2026-11-07T15:01:29.000Z"
+        }
       }
     }
   },
@@ -31485,7 +32233,7 @@
     },
     "/about/": {
       "sourcePath": "about/index.html",
-      "sourceHash": "59d75a0eef51625aae05c83ed835818c113f8df62143757fc3832763b6a98d98",
+      "sourceHash": "3341eb473bf970be2273dc9e6531fdae0bac575e9a07ef9f1bcb9ba1dcb59052",
       "segments": {
         "s0001": {
           "kind": "text",
@@ -31761,281 +32509,441 @@
         "s0042": {
           "kind": "attribute",
           "attribute": "alt",
+          "sourceText": "Tong",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > img",
+          "translationKey": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689"
+        },
+        "s0043": {
+          "kind": "text",
+          "sourceText": "Tong",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
+          "translationKey": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689"
+        },
+        "s0044": {
+          "kind": "text",
+          "sourceText": " An immersive life sim for learning Mandarin, Korean and Japanese, with romance, GPT-powered characters and language minigames such as block crush puzzles. ",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
+          "translationKey": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7"
+        },
+        "s0045": {
+          "kind": "text",
+          "sourceText": "Language learning",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256"
+        },
+        "s0046": {
+          "kind": "text",
+          "sourceText": "Game",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b"
+        },
+        "s0047": {
+          "kind": "text",
+          "sourceText": "GPT",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35"
+        },
+        "s0048": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Spindle",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > img",
+          "translationKey": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a"
+        },
+        "s0049": {
+          "kind": "text",
+          "sourceText": "Spindle",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
+          "translationKey": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a"
+        },
+        "s0050": {
+          "kind": "text",
+          "sourceText": " A time tracker that gives you time back by turning recurring chores, such as identity photo requirements and form filling, into automated routines. Available for macOS, Windows and Chrome. ",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
+          "translationKey": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179"
+        },
+        "s0051": {
+          "kind": "text",
+          "sourceText": "Time tracking",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2"
+        },
+        "s0052": {
+          "kind": "text",
+          "sourceText": "Automation",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64"
+        },
+        "s0053": {
+          "kind": "text",
+          "sourceText": "macOS",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7"
+        },
+        "s0054": {
+          "kind": "text",
+          "sourceText": "Windows",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10"
+        },
+        "s0055": {
+          "kind": "text",
+          "sourceText": "Chrome",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a"
+        },
+        "s0056": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Rucksack",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > img",
+          "translationKey": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7"
+        },
+        "s0057": {
+          "kind": "text",
+          "sourceText": "Rucksack",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
+          "translationKey": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7"
+        },
+        "s0058": {
+          "kind": "text",
+          "sourceText": " A friendly control plane for agents running on a VM, with built-in routing so work runs 24/7 without wasting tokens. ",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
+          "translationKey": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489"
+        },
+        "s0059": {
+          "kind": "text",
+          "sourceText": "Agents",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee"
+        },
+        "s0060": {
+          "kind": "text",
+          "sourceText": "Routing",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060"
+        },
+        "s0061": {
+          "kind": "text",
+          "sourceText": "VM",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6"
+        },
+        "s0062": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Paillette",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > img",
+          "translationKey": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7"
+        },
+        "s0063": {
+          "kind": "text",
+          "sourceText": "Paillette",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
+          "translationKey": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7"
+        },
+        "s0064": {
+          "kind": "text",
+          "sourceText": " Makes artworks from the National Gallery Singapore and the National Gallery of Art searchable and discoverable, using a Reciprocal Rank Fusion search built with Codex. ",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
+          "translationKey": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae"
+        },
+        "s0065": {
+          "kind": "text",
+          "sourceText": "Search",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9"
+        },
+        "s0066": {
+          "kind": "text",
+          "sourceText": "Reciprocal Rank Fusion",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7"
+        },
+        "s0067": {
+          "kind": "text",
+          "sourceText": "Codex",
+          "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
+          "translationKey": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c"
+        },
+        "s0068": {
+          "kind": "attribute",
+          "attribute": "alt",
           "sourceText": "Neural Art Search",
           "context": "html > body > div > main > div > section > div > div > div > a > div > img",
           "translationKey": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd"
         },
-        "s0043": {
+        "s0069": {
           "kind": "text",
           "sourceText": "Neural Art Search",
           "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
           "translationKey": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd"
         },
-        "s0044": {
+        "s0070": {
           "kind": "text",
           "sourceText": " A neural search system for artworks on the National Gallery Singapore collection. Enables intuitive discovery of art pieces through advanced semantic search capabilities. ",
           "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
           "translationKey": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2"
         },
-        "s0045": {
+        "s0071": {
           "kind": "text",
           "sourceText": "LanceDB",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3"
         },
-        "s0046": {
+        "s0072": {
           "kind": "text",
           "sourceText": "FastHTML",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185"
         },
-        "s0047": {
+        "s0073": {
           "kind": "text",
           "sourceText": "Neural Search",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869"
         },
-        "s0048": {
+        "s0074": {
           "kind": "attribute",
           "attribute": "alt",
           "sourceText": "StoryLabs",
           "context": "html > body > div > main > div > section > div > div > div > a > div > img",
           "translationKey": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54"
         },
-        "s0049": {
+        "s0075": {
           "kind": "text",
           "sourceText": "StoryLabs",
           "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
           "translationKey": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54"
         },
-        "s0050": {
+        "s0076": {
           "kind": "text",
           "sourceText": " A full-stack, multimedia story generator and reader that personalizes content to a child's diverse interests. ",
           "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
           "translationKey": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436"
         },
-        "s0051": {
+        "s0077": {
           "kind": "text",
           "sourceText": "Next.js",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6"
         },
-        "s0052": {
+        "s0078": {
           "kind": "text",
           "sourceText": "OpenAI",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4"
         },
-        "s0053": {
+        "s0079": {
           "kind": "text",
           "sourceText": "Replicate",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f"
         },
-        "s0054": {
+        "s0080": {
           "kind": "text",
           "sourceText": "Flux",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3"
         },
-        "s0055": {
+        "s0081": {
           "kind": "text",
           "sourceText": "LLM",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5"
         },
-        "s0056": {
+        "s0082": {
           "kind": "attribute",
           "attribute": "alt",
           "sourceText": "The Sound of Stories",
           "context": "html > body > div > main > div > section > div > div > div > a > div > img",
           "translationKey": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236"
         },
-        "s0057": {
+        "s0083": {
           "kind": "text",
           "sourceText": "The Sound of Stories",
           "context": "html > body > div > main > div > section > div > div > div > a > div > h3 > span > span",
           "translationKey": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236"
         },
-        "s0058": {
+        "s0084": {
           "kind": "text",
           "sourceText": " Featured at the Esplanade as part of National Arts Council’s Arts x Tech Lab 2023/24, this bilingual storyteller personalizes \"The Boy and the Drum\" for each reader on WhatsApp. ",
           "context": "html > body > div > main > div > section > div > div > div > a > div > p > p",
           "translationKey": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559"
         },
-        "s0059": {
+        "s0085": {
           "kind": "text",
           "sourceText": "Claude",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6"
         },
-        "s0060": {
+        "s0086": {
           "kind": "text",
           "sourceText": "WhatsApp",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3"
         },
-        "s0061": {
+        "s0087": {
           "kind": "text",
           "sourceText": "Firebase",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e"
         },
-        "s0062": {
+        "s0088": {
           "kind": "text",
           "sourceText": "ElevenLabs",
           "context": "html > body > div > main > div > section > div > div > div > a > div > div > div > div",
           "translationKey": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915"
         },
-        "s0063": {
+        "s0089": {
           "kind": "text",
           "sourceText": "\n© 2026 ",
           "context": "html > body > div > footer > div > div > div > span > span",
           "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
         },
-        "s0064": {
+        "s0090": {
           "kind": "text",
           "sourceText": "All rights reserved.",
           "context": "html > body > div > footer > div > div > div > span > span > span",
           "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
         },
-        "s0065": {
+        "s0091": {
           "kind": "text",
           "sourceText": "Made with care by",
           "context": "html > body > div > footer > div > div > div > p > span > span",
           "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
         },
-        "s0066": {
+        "s0092": {
           "kind": "text",
           "sourceText": " enscribe ",
           "context": "html > body > div > footer > div > div > div > p > a > a",
           "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
         },
-        "s0067": {
+        "s0093": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "More",
           "context": "html > body > div > footer > div > div > nav",
           "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
         },
-        "s0068": {
+        "s0094": {
           "kind": "text",
           "sourceText": "About",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
         },
-        "s0069": {
+        "s0095": {
           "kind": "text",
           "sourceText": "Tags",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
         },
-        "s0070": {
+        "s0096": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
-        "s0071": {
+        "s0097": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
-        "s0072": {
+        "s0098": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
-        "s0073": {
+        "s0099": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
-        "s0074": {
+        "s0100": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
-        "s0075": {
+        "s0101": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
-        "s0076": {
+        "s0102": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
-        "s0077": {
+        "s0103": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
-        "s0078": {
+        "s0104": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
-        "s0079": {
+        "s0105": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
-        "s0080": {
+        "s0106": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0081": {
+        "s0107": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0082": {
+        "s0108": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0083": {
+        "s0109": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0084": {
+        "s0110": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "RSS",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
         },
-        "s0085": {
+        "s0111": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "RSS",
@@ -32046,7 +32954,7 @@
       "locales": {
         "zh": {
           "status": "machine",
-          "sourceHash": "59d75a0eef51625aae05c83ed835818c113f8df62143757fc3832763b6a98d98",
+          "sourceHash": "3341eb473bf970be2273dc9e6531fdae0bac575e9a07ef9f1bcb9ba1dcb59052",
           "translationKeys": {
             "s0001": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
             "s0002": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
@@ -32089,55 +32997,81 @@
             "s0039": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
             "s0040": "533b8c07c73ce8c209b5616613ce7d830c3134df9e5653df664084fd242c70db",
             "s0041": "598c2efc442b2b5485f1011de1d7837de24883f7a005c666458abf53a7c1cd6e",
-            "s0042": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0043": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0044": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
-            "s0045": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
-            "s0046": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
-            "s0047": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
-            "s0048": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0049": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0050": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
-            "s0051": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
-            "s0052": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
-            "s0053": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
-            "s0054": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
-            "s0055": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
-            "s0056": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0057": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0058": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
-            "s0059": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
-            "s0060": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
-            "s0061": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
-            "s0062": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
-            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0042": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0043": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0044": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+            "s0045": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+            "s0046": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+            "s0047": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+            "s0048": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0049": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0050": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+            "s0051": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+            "s0052": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+            "s0053": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+            "s0054": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+            "s0055": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+            "s0056": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0057": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0058": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+            "s0059": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+            "s0060": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+            "s0061": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+            "s0062": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0063": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0064": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+            "s0065": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+            "s0066": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+            "s0067": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+            "s0068": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0069": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0070": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
+            "s0071": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
+            "s0072": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
+            "s0073": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
+            "s0074": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0075": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0076": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
+            "s0077": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
+            "s0078": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
+            "s0079": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
+            "s0080": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
+            "s0081": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
+            "s0082": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0083": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0084": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
+            "s0085": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
+            "s0086": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
+            "s0087": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
+            "s0088": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
+            "s0089": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0090": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0091": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0092": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0093": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0094": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0095": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0096": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0097": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0098": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0099": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0100": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0101": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0102": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0103": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0104": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0105": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0106": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0107": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0108": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0109": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0110": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0111": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ja": {
           "status": "machine",
-          "sourceHash": "59d75a0eef51625aae05c83ed835818c113f8df62143757fc3832763b6a98d98",
+          "sourceHash": "3341eb473bf970be2273dc9e6531fdae0bac575e9a07ef9f1bcb9ba1dcb59052",
           "translationKeys": {
             "s0001": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
             "s0002": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
@@ -32180,55 +33114,81 @@
             "s0039": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
             "s0040": "533b8c07c73ce8c209b5616613ce7d830c3134df9e5653df664084fd242c70db",
             "s0041": "598c2efc442b2b5485f1011de1d7837de24883f7a005c666458abf53a7c1cd6e",
-            "s0042": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0043": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0044": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
-            "s0045": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
-            "s0046": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
-            "s0047": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
-            "s0048": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0049": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0050": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
-            "s0051": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
-            "s0052": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
-            "s0053": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
-            "s0054": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
-            "s0055": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
-            "s0056": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0057": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0058": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
-            "s0059": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
-            "s0060": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
-            "s0061": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
-            "s0062": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
-            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0042": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0043": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0044": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+            "s0045": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+            "s0046": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+            "s0047": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+            "s0048": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0049": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0050": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+            "s0051": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+            "s0052": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+            "s0053": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+            "s0054": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+            "s0055": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+            "s0056": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0057": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0058": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+            "s0059": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+            "s0060": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+            "s0061": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+            "s0062": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0063": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0064": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+            "s0065": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+            "s0066": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+            "s0067": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+            "s0068": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0069": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0070": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
+            "s0071": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
+            "s0072": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
+            "s0073": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
+            "s0074": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0075": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0076": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
+            "s0077": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
+            "s0078": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
+            "s0079": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
+            "s0080": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
+            "s0081": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
+            "s0082": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0083": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0084": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
+            "s0085": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
+            "s0086": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
+            "s0087": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
+            "s0088": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
+            "s0089": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0090": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0091": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0092": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0093": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0094": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0095": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0096": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0097": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0098": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0099": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0100": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0101": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0102": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0103": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0104": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0105": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0106": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0107": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0108": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0109": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0110": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0111": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ko": {
           "status": "machine",
-          "sourceHash": "59d75a0eef51625aae05c83ed835818c113f8df62143757fc3832763b6a98d98",
+          "sourceHash": "3341eb473bf970be2273dc9e6531fdae0bac575e9a07ef9f1bcb9ba1dcb59052",
           "translationKeys": {
             "s0001": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
             "s0002": "997803d5235e061a3d5effb2e5cf20ba4546675c6fbf34ad9b204edfdb12a82c",
@@ -32271,50 +33231,76 @@
             "s0039": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
             "s0040": "533b8c07c73ce8c209b5616613ce7d830c3134df9e5653df664084fd242c70db",
             "s0041": "598c2efc442b2b5485f1011de1d7837de24883f7a005c666458abf53a7c1cd6e",
-            "s0042": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0043": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
-            "s0044": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
-            "s0045": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
-            "s0046": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
-            "s0047": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
-            "s0048": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0049": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
-            "s0050": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
-            "s0051": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
-            "s0052": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
-            "s0053": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
-            "s0054": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
-            "s0055": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
-            "s0056": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0057": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
-            "s0058": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
-            "s0059": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
-            "s0060": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
-            "s0061": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
-            "s0062": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
-            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0042": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0043": "5ad2a1bc909c87b76cccdac5a105101f48d982254e241f84e249203830f18689",
+            "s0044": "58b2ff0c780c8105299a3ed34fdd6719300970844b2fbed1b9bc4716b49966c7",
+            "s0045": "cf032eb29801f8f785b96beb38f14b713d19740fd499fe38eb7f4df53d5b2256",
+            "s0046": "5c412a262086b9701cda06302f6667f9265b1807d0368fcec6cc03bf64fc250b",
+            "s0047": "2c4e6f6c46954cd6c64e44a2a400e8eb052d0d057059cf4af3a942b3caca7e35",
+            "s0048": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0049": "d58f294432389e6ede9a830aff372ce4fdbe776ba281eef02ce8e2ce8141190a",
+            "s0050": "d41317af352108a3242ee4598f604398a5321d4c6b30a04dcd40651c3c762179",
+            "s0051": "c9c12b5992a6f39b5772ae7e194d1e45f4ecca8b271225274b3adf48ed0476a2",
+            "s0052": "d909750b1bbb71a39b6330ba8f81f4f8f6e889ed96d7ab366e74857909750c64",
+            "s0053": "aed6b7aa2a0511a9bbcaae2a10127a3139fc6494c57769b31b1a694c14483ce7",
+            "s0054": "d598026a9cbc60505f138ce53ac78088d582100c196d0f70c7e2538d4a8d7e10",
+            "s0055": "c4ef2ec214f90032f39dddfbfe51add7ef2c79da14fb2ccf14cb4c9ad15e5c9a",
+            "s0056": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0057": "1ccb66c8ff92a72d77eddc3a6256f1ca9c5ba2ed770c967b041eb84a234573c7",
+            "s0058": "6100775aad94484fde75c4b1ed426355b8d089f89b0d74201328cad2b0560489",
+            "s0059": "279b44d2ab4b40c0fc132f8f3051293544cca91de9c8aa14f2cd29adb132b0ee",
+            "s0060": "bcba696f3eb100537ab06942d097dfb259afca3eaa6e37a43327e67215620060",
+            "s0061": "8e5abdd396d535012cb3b24b6c998ab6d8f8118fe5c564c21c624c54964464e6",
+            "s0062": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0063": "318fd7a01b17e7847823c4394075747cc2a9f9e42fddedb1e11827164b300aa7",
+            "s0064": "356f3e0f56203627191a10d6b6ab2b8b2f156880f7c5b83df0bcf02a15ed36ae",
+            "s0065": "49c266baaaa70981ea188fa714d5c40cf13830d786a861c9943ae0d26a7f3fe9",
+            "s0066": "583ff762b004ef528bb0d3ab98b5a934b7f1820dfb195f4daf172a287bbae5d7",
+            "s0067": "616efbe96852d8c957d6be5634ed41e871cf1ecf134c9b9693f614daeb15137c",
+            "s0068": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0069": "398f8236d75fefd27fed6f3cb88e9726d6413d6ef1ebf94a7465283dda011fdd",
+            "s0070": "ae16226fa233c6ab4fcefe5a9ecd985a7222eca6effe457af00aff17fcdac5f2",
+            "s0071": "4a8adbf70056363c6eaab7692322432fdff3289af3db15f677d4ac274c0e3ba3",
+            "s0072": "6216ddde478d02630876f4c9e3954acf16f345e7de177bdceacf10c1675ae185",
+            "s0073": "9f37d28be4cf1fbe4f58173afd567a3dcba9d183221dea5b475a10ef74762869",
+            "s0074": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0075": "87b5f65d5f1f11f9af516de6a0540b6eb752006dd16aa0424343add2a1d7ce54",
+            "s0076": "5a015a6593634296ea7ff5698d17cb3d196035b24c9b6ac7f8ef3629d797b436",
+            "s0077": "30b7f8482c4f570c063e4dff04b91ddc9b2b5f535ac70fedffb1cf34e0d23ec6",
+            "s0078": "8b7d1a3187ab355dc31bc683aaa71ab5ed217940c12196a9cd5f4ca984babfa4",
+            "s0079": "e014d9622f4de177686faeec5e8034270a908d8a1ffbfdd160f9d7dc4799547f",
+            "s0080": "f5edfb1fdf449300af6a0e1a089a2fece6de4649f3b7c9df885abf7662fe31e3",
+            "s0081": "674900a77b798af1723bbfc31f01c199e4a1ea6f19aeff9791d6318ca12979b5",
+            "s0082": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0083": "89527f1b5ba30d6999929d6c3f7aa3670b7e9dcf99a10d6ffc552da37e8e7236",
+            "s0084": "eae0a13ebad8da68dfcbf0404cf03d716abbf56bb972aa44e4f0d45330a1c559",
+            "s0085": "0615570f9ea136946c5dc08a250010320707646f57f72cedab1dfb73d95eade6",
+            "s0086": "6a40edf1fc87a29f243a7eefdbed57d19bfe16ab2e039d7ae1a44c097297e2f3",
+            "s0087": "4f3a3e91015ed845f6eb5550bc3334001c9501620b1d75299234903fe95f527e",
+            "s0088": "91268016fe6765efe3f7da96437c04676ed8cd8de778298a0c8ceba6c297f915",
+            "s0089": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0090": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0091": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0092": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0093": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0094": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0095": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0096": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0097": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0098": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0099": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0100": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0101": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0102": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0103": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0104": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0105": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0106": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0107": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0108": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0109": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0110": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0111": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         }
       }

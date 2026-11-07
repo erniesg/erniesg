@@ -235,7 +235,9 @@ test('restarts cleanly after client-side navigation', async ({ page }) => {
   await openAtlas(page)
   await page.locator('header a[data-header-link="/about"]').click()
   await expect(page).toHaveURL(/\/about/)
-  await page.locator('header a[data-header-link="/atlas"]').click()
+  await page
+    .locator('[data-atlas-teaser]')
+    .click({ position: { x: 40, y: 40 } })
   await expect(page).toHaveURL(/\/atlas/)
   await expect(page.locator('[data-atlas-stage]')).toHaveAttribute(
     'data-state',
@@ -265,4 +267,23 @@ test('the About page teases the atlas and links through', async ({ page }) => {
   await teaser.scrollIntoViewIfNeeded()
   await teaser.click({ position: { x: 40, y: 40 } })
   await expect(page).toHaveURL(/\/atlas/)
+})
+
+test('the atlas stays out of the header', async ({ page }) => {
+  await page.goto('/about')
+  await expect(page.locator('header a[href="/atlas"]')).toHaveCount(0)
+})
+
+test('hovering the atlas teaser leaves the personal card alone', async ({
+  page,
+}) => {
+  await page.goto('/about', { waitUntil: 'networkidle' })
+  const teaser = page.locator('[data-atlas-teaser]')
+  const card = page.locator('div.rounded-xl:has([data-atlas-teaser])')
+  const background = () =>
+    card.evaluate((element) => getComputedStyle(element).backgroundColor)
+  const before = await background()
+  await teaser.hover({ position: { x: 40, y: 40 } })
+  await page.waitForTimeout(450)
+  expect(await background()).toBe(before)
 })

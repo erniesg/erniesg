@@ -729,6 +729,11 @@ async function pageStyleContext(locale) {
     .join('\n\n')
 }
 
+// Machine providers whose output may be reused and published. Each entry
+// records its provider in provenance, so the source of every translation stays
+// auditable.
+const ACCEPTED_MACHINE_PROVIDERS = new Set(['codex-cli', 'claude-sonnet'])
+
 function usableCachedTranslation(catalog, locale, segment) {
   const key = segment.translationKey
   const entry = catalog.translations?.[locale]?.[key]
@@ -738,7 +743,7 @@ function usableCachedTranslation(catalog, locale, segment) {
   if (entry.status !== 'machine') return true
   const source = catalog.strings?.[key]
   return Boolean(
-    entry.provenance?.provider === 'codex-cli' &&
+    ACCEPTED_MACHINE_PROVIDERS.has(entry.provenance?.provider) &&
       source?.sourceHash === entry.sourceHash &&
       typeof source.sourceText === 'string' &&
       sha256(source.sourceText) === entry.sourceHash &&
@@ -766,10 +771,13 @@ export async function generatePageTranslations({
   write = false,
   onPage,
   onPartial,
+  provider = 'codex-cli',
   runStructuredJson = runCodexStructuredJson,
 } = {}) {
   if (!PAGE_LOCALES.includes(locale))
     throw new Error(`Unsupported page locale: ${locale}`)
+  if (!ACCEPTED_MACHINE_PROVIDERS.has(provider))
+    throw new Error(`Unsupported machine provider: ${provider}`)
   const result = structuredClone(catalog)
   result.translations ??= {}
   result.translations[locale] ??= {}
@@ -822,7 +830,7 @@ export async function generatePageTranslations({
             text: value,
             status: 'machine',
             sourceHash: result.strings?.[key]?.sourceHash ?? sha256(page.segments[id].sourceText),
-            provenance: { provider: 'codex-cli', generatedAt: new Date().toISOString() },
+            provenance: { provider, generatedAt: new Date().toISOString() },
           }
         }
         outstanding = outstanding.filter((id) => !translations[id])

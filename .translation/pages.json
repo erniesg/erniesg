@@ -5600,6 +5600,62 @@
     "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664": {
       "sourceText": "\nServer conversion: 10 MiB; 3 attempts/network/day, 20 total/day (UTC),\n      including failures. Links and completed files expire after 72h; pending\n      jobs remain until complete.\n",
       "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+    },
+    "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab": {
+      "sourceText": "2026",
+      "sourceHash": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab"
+    },
+    "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e": {
+      "sourceText": "Posts tagged with \"build in public\" | Ernie.SG",
+      "sourceHash": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e"
+    },
+    "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024": {
+      "sourceText": "A collection of posts tagged with build in public.",
+      "sourceHash": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024"
+    },
+    "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63": {
+      "sourceText": " Build in public ",
+      "sourceHash": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63"
+    },
+    "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926": {
+      "sourceText": "Build in public",
+      "sourceHash": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926"
+    },
+    "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a": {
+      "sourceText": "\n(3)\n",
+      "sourceHash": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a"
+    },
+    "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718": {
+      "sourceText": "outcome as a service",
+      "sourceHash": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718"
+    },
+    "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e": {
+      "sourceText": "spindle",
+      "sourceHash": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e"
+    },
+    "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7": {
+      "sourceText": "Posts tagged with \"outcome as a service\" | Ernie.SG",
+      "sourceHash": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7"
+    },
+    "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb": {
+      "sourceText": "A collection of posts tagged with outcome as a service.",
+      "sourceHash": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb"
+    },
+    "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8": {
+      "sourceText": " outcome as a service ",
+      "sourceHash": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8"
+    },
+    "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd": {
+      "sourceText": "Posts tagged with \"spindle\" | Ernie.SG",
+      "sourceHash": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd"
+    },
+    "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced": {
+      "sourceText": "A collection of posts tagged with spindle.",
+      "sourceHash": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced"
+    },
+    "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f": {
+      "sourceText": " spindle ",
+      "sourceHash": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f"
     }
   },
   "translations": {
@@ -15711,6 +15767,118 @@
         "text": "\n服务器转换：10 MiB；每个网络每天 3 次尝试，每天共 20 次（UTC），失败也计入。链接和已完成文件将在 72 小时后过期；待处理任务会保留至完成。\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab": {
+        "text": "2026",
+        "status": "edited",
+        "sourceHash": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e": {
+        "text": "build in public 标签下的文章 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024": {
+        "text": "汇集所有标有 build in public 标签的文章。",
+        "status": "edited",
+        "sourceHash": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63": {
+        "text": " Build in public ",
+        "status": "edited",
+        "sourceHash": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926": {
+        "text": "Build in public",
+        "status": "edited",
+        "sourceHash": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a": {
+        "text": "\n(3)\n",
+        "status": "edited",
+        "sourceHash": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718": {
+        "text": "outcome as a service",
+        "status": "edited",
+        "sourceHash": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e": {
+        "text": "spindle",
+        "status": "edited",
+        "sourceHash": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7": {
+        "text": "outcome as a service 标签下的文章 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb": {
+        "text": "汇集所有标有 outcome as a service 标签的文章。",
+        "status": "edited",
+        "sourceHash": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8": {
+        "text": " outcome as a service ",
+        "status": "edited",
+        "sourceHash": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd": {
+        "text": "spindle 标签下的文章 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced": {
+        "text": "汇集所有标有 spindle 标签的文章。",
+        "status": "edited",
+        "sourceHash": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f": {
+        "text": " spindle ",
+        "status": "edited",
+        "sourceHash": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+        "provenance": {
+          "provider": "claude-code"
+        }
       }
     },
     "ja": {
@@ -23430,6 +23598,118 @@
         "text": "\nサーバー変換：10 MiB、ネットワークごとに1日3回まで、全体で1日20回まで（UTC、失敗分を含む）。リンクと完了済みファイルは72時間で失効し、保留中のジョブは完了まで保持されます。\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab": {
+        "text": "2026",
+        "status": "edited",
+        "sourceHash": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e": {
+        "text": "「build in public」タグの記事 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024": {
+        "text": "build in publicタグが付いた記事の一覧です。",
+        "status": "edited",
+        "sourceHash": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63": {
+        "text": " Build in public ",
+        "status": "edited",
+        "sourceHash": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926": {
+        "text": "Build in public",
+        "status": "edited",
+        "sourceHash": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a": {
+        "text": "\n(3)\n",
+        "status": "edited",
+        "sourceHash": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718": {
+        "text": "outcome as a service",
+        "status": "edited",
+        "sourceHash": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e": {
+        "text": "spindle",
+        "status": "edited",
+        "sourceHash": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7": {
+        "text": "「outcome as a service」タグの記事 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb": {
+        "text": "outcome as a serviceタグが付いた記事の一覧です。",
+        "status": "edited",
+        "sourceHash": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8": {
+        "text": " outcome as a service ",
+        "status": "edited",
+        "sourceHash": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd": {
+        "text": "「spindle」タグの記事 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced": {
+        "text": "spindleタグが付いた記事の一覧です。",
+        "status": "edited",
+        "sourceHash": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f": {
+        "text": " spindle ",
+        "status": "edited",
+        "sourceHash": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+        "provenance": {
+          "provider": "claude-code"
+        }
       }
     },
     "ko": {
@@ -31013,6 +31293,118 @@
         "text": "\n서버 변환: 10 MiB, 네트워크당 하루 3회, 전체 하루 20회(UTC, 실패 포함)까지 시도할 수 있습니다. 링크와 완료된 파일은 72시간 후 만료되며, 대기 중인 작업은 완료될 때까지 유지됩니다.\n",
         "status": "native",
         "sourceHash": "95334f701b8ec41fbd5128da16b0b6d8e60332f7e31a0c45fb78b2b7e7a2b664"
+      },
+      "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab": {
+        "text": "2026",
+        "status": "edited",
+        "sourceHash": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e": {
+        "text": "build in public 태그가 붙은 글 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024": {
+        "text": "build in public 태그가 붙은 글을 모았습니다.",
+        "status": "edited",
+        "sourceHash": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63": {
+        "text": " Build in public ",
+        "status": "edited",
+        "sourceHash": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926": {
+        "text": "Build in public",
+        "status": "edited",
+        "sourceHash": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a": {
+        "text": "\n(3)\n",
+        "status": "edited",
+        "sourceHash": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718": {
+        "text": "outcome as a service",
+        "status": "edited",
+        "sourceHash": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e": {
+        "text": "spindle",
+        "status": "edited",
+        "sourceHash": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7": {
+        "text": "outcome as a service 태그가 붙은 글 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb": {
+        "text": "outcome as a service 태그가 붙은 글을 모았습니다.",
+        "status": "edited",
+        "sourceHash": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8": {
+        "text": " outcome as a service ",
+        "status": "edited",
+        "sourceHash": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd": {
+        "text": "spindle 태그가 붙은 글 | Ernie.SG",
+        "status": "edited",
+        "sourceHash": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced": {
+        "text": "spindle 태그가 붙은 글을 모았습니다.",
+        "status": "edited",
+        "sourceHash": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+        "provenance": {
+          "provider": "claude-code"
+        }
+      },
+      "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f": {
+        "text": " spindle ",
+        "status": "edited",
+        "sourceHash": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+        "provenance": {
+          "provider": "claude-code"
+        }
       }
     }
   },
@@ -34700,7 +35092,7 @@
     },
     "/blog/": {
       "sourcePath": "blog/index.html",
-      "sourceHash": "6e7bf22ee43bc156322ff8a362056c4f2cdee749f1f4759571fdeddffe4c5ade",
+      "sourceHash": "b79bf71b105932f8992660d1d0f01bcd07bbdeb6390b066156ebd6c77cd578aa",
       "segments": {
         "s0001": {
           "kind": "text",
@@ -34845,216 +35237,222 @@
         },
         "s0023": {
           "kind": "text",
+          "sourceText": "2026",
+          "context": "html > body > div > main > div > div > section > div > div",
+          "translationKey": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab"
+        },
+        "s0024": {
+          "kind": "text",
           "sourceText": "2025",
           "context": "html > body > div > main > div > div > section > div > div",
           "translationKey": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744"
         },
-        "s0024": {
+        "s0025": {
           "kind": "text",
           "sourceText": "2024",
           "context": "html > body > div > main > div > div > section > div > div",
           "translationKey": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b"
         },
-        "s0025": {
+        "s0026": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "pagination",
           "context": "html > body > div > main > div > astro-island > nav",
           "translationKey": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7"
         },
-        "s0026": {
+        "s0027": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Go to previous page",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a",
           "translationKey": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832"
         },
-        "s0027": {
+        "s0028": {
           "kind": "text",
           "sourceText": "Previous",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a > span > span",
           "translationKey": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa"
         },
-        "s0028": {
+        "s0029": {
           "kind": "text",
           "sourceText": "1",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a > a",
           "translationKey": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
         },
-        "s0029": {
+        "s0030": {
           "kind": "text",
           "sourceText": "2",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a > a",
           "translationKey": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35"
         },
-        "s0030": {
+        "s0031": {
           "kind": "text",
           "sourceText": "3",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a > a",
           "translationKey": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
         },
-        "s0031": {
+        "s0032": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Go to next page",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a",
           "translationKey": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945"
         },
-        "s0032": {
+        "s0033": {
           "kind": "text",
           "sourceText": "Next",
           "context": "html > body > div > main > div > astro-island > nav > ul > li > a > span > span",
           "translationKey": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858"
         },
-        "s0033": {
+        "s0034": {
           "kind": "text",
           "sourceText": "\n© 2026 ",
           "context": "html > body > div > footer > div > div > div > span > span",
           "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
         },
-        "s0034": {
+        "s0035": {
           "kind": "text",
           "sourceText": "All rights reserved.",
           "context": "html > body > div > footer > div > div > div > span > span > span",
           "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
         },
-        "s0035": {
+        "s0036": {
           "kind": "text",
           "sourceText": "Made with care by",
           "context": "html > body > div > footer > div > div > div > p > span > span",
           "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
         },
-        "s0036": {
+        "s0037": {
           "kind": "text",
           "sourceText": " enscribe ",
           "context": "html > body > div > footer > div > div > div > p > a > a",
           "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
         },
-        "s0037": {
+        "s0038": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "More",
           "context": "html > body > div > footer > div > div > nav",
           "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
         },
-        "s0038": {
+        "s0039": {
           "kind": "text",
           "sourceText": "About",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
         },
-        "s0039": {
+        "s0040": {
           "kind": "text",
           "sourceText": "Tags",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
         },
-        "s0040": {
-          "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "GitHub",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
-        },
         "s0041": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
         "s0042": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "Twitter",
+          "attribute": "title",
+          "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
         "s0043": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
         "s0044": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "LinkedIn",
+          "attribute": "title",
+          "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
         "s0045": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
         "s0046": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "YouTube",
+          "attribute": "title",
+          "sourceText": "LinkedIn",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
         },
         "s0047": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
         "s0048": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "Facebook",
+          "attribute": "title",
+          "sourceText": "YouTube",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
         },
         "s0049": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
         "s0050": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "Instagram",
+          "attribute": "title",
+          "sourceText": "Facebook",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
         },
         "s0051": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
         "s0052": {
           "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "Email",
+          "attribute": "title",
+          "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
         "s0053": {
           "kind": "attribute",
-          "attribute": "title",
+          "attribute": "aria-label",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
         "s0054": {
           "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0055": {
+          "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "RSS",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
         },
-        "s0055": {
+        "s0056": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "RSS",
@@ -35065,7 +35463,7 @@
       "locales": {
         "zh": {
           "status": "machine",
-          "sourceHash": "6e7bf22ee43bc156322ff8a362056c4f2cdee749f1f4759571fdeddffe4c5ade",
+          "sourceHash": "b79bf71b105932f8992660d1d0f01bcd07bbdeb6390b066156ebd6c77cd578aa",
           "translationKeys": {
             "s0001": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
             "s0002": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
@@ -35089,44 +35487,45 @@
             "s0020": "bdf97367072380473f9dc0402583312b163cf7bd67fd89539a9ae136c3a0f2dc",
             "s0021": "6e5d2b35d65aa6cd74eeeccef144d1afd1b5205613b8eb8a0d66f5882f65dac7",
             "s0022": "1082df5266c9badb0e9afb0bd76a35db52e3a576d0487bd717e313f15295e404",
-            "s0023": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
-            "s0024": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
-            "s0025": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
-            "s0026": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
-            "s0027": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
-            "s0028": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
-            "s0029": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
-            "s0030": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
-            "s0031": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
-            "s0032": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
-            "s0033": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0034": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0035": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0036": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0037": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0038": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0039": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0040": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0023": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+            "s0024": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
+            "s0025": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
+            "s0026": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
+            "s0027": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
+            "s0028": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
+            "s0029": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "s0030": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+            "s0031": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+            "s0032": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
+            "s0033": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
+            "s0034": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0035": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0036": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0037": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0038": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0039": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0040": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
             "s0041": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0042": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0042": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
             "s0043": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0044": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0044": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
             "s0045": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0046": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0046": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
             "s0047": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0048": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0048": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
             "s0049": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0050": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0050": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
             "s0051": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0052": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0052": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
             "s0053": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0054": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0054": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0056": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ja": {
           "status": "machine",
-          "sourceHash": "6e7bf22ee43bc156322ff8a362056c4f2cdee749f1f4759571fdeddffe4c5ade",
+          "sourceHash": "b79bf71b105932f8992660d1d0f01bcd07bbdeb6390b066156ebd6c77cd578aa",
           "translationKeys": {
             "s0001": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
             "s0002": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
@@ -35150,44 +35549,45 @@
             "s0020": "bdf97367072380473f9dc0402583312b163cf7bd67fd89539a9ae136c3a0f2dc",
             "s0021": "6e5d2b35d65aa6cd74eeeccef144d1afd1b5205613b8eb8a0d66f5882f65dac7",
             "s0022": "1082df5266c9badb0e9afb0bd76a35db52e3a576d0487bd717e313f15295e404",
-            "s0023": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
-            "s0024": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
-            "s0025": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
-            "s0026": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
-            "s0027": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
-            "s0028": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
-            "s0029": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
-            "s0030": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
-            "s0031": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
-            "s0032": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
-            "s0033": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0034": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0035": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0036": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0037": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0038": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0039": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0040": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0023": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+            "s0024": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
+            "s0025": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
+            "s0026": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
+            "s0027": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
+            "s0028": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
+            "s0029": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "s0030": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+            "s0031": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+            "s0032": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
+            "s0033": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
+            "s0034": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0035": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0036": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0037": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0038": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0039": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0040": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
             "s0041": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0042": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0042": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
             "s0043": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0044": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0044": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
             "s0045": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0046": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0046": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
             "s0047": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0048": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0048": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
             "s0049": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0050": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0050": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
             "s0051": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0052": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0052": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
             "s0053": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0054": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0054": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0056": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ko": {
           "status": "machine",
-          "sourceHash": "6e7bf22ee43bc156322ff8a362056c4f2cdee749f1f4759571fdeddffe4c5ade",
+          "sourceHash": "b79bf71b105932f8992660d1d0f01bcd07bbdeb6390b066156ebd6c77cd578aa",
           "translationKeys": {
             "s0001": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
             "s0002": "c434cddf34274b4b21830ff27fa1cbda7d4bb186a9d9048e150de9ae8c98f5ed",
@@ -35211,39 +35611,40 @@
             "s0020": "bdf97367072380473f9dc0402583312b163cf7bd67fd89539a9ae136c3a0f2dc",
             "s0021": "6e5d2b35d65aa6cd74eeeccef144d1afd1b5205613b8eb8a0d66f5882f65dac7",
             "s0022": "1082df5266c9badb0e9afb0bd76a35db52e3a576d0487bd717e313f15295e404",
-            "s0023": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
-            "s0024": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
-            "s0025": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
-            "s0026": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
-            "s0027": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
-            "s0028": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
-            "s0029": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
-            "s0030": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
-            "s0031": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
-            "s0032": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
-            "s0033": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0034": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0035": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0036": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0037": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0038": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0039": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0040": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0023": "158a323a7ba44870f23d96f1516dd70aa48e9a72db4ebb026b0a89e212a208ab",
+            "s0024": "b2b2f104d32c638903e151a9b20d6e27b41d8c0c84cf8458738f83ca2f1dd744",
+            "s0025": "6557739a67283a8de383fc5c0997fbec7c5721a46f28f3235fc9607598d9016b",
+            "s0026": "c30ad110383ef0c5dc73ca3fe07f795776d8edf1eaf798a04b09ccee16516bb7",
+            "s0027": "2865e0f438b48b92d7793a9d7cc8663915b284de7a1dfd8f7f1bbd6e8533f832",
+            "s0028": "a57b08a480b822a0a572b993391c292ede593bf8000b406675b180bbb16260fa",
+            "s0029": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "s0030": "d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+            "s0031": "4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce",
+            "s0032": "7e021afbf6ac45b7c0f095f6649538dd0a03e0572b5416eb579067343926d945",
+            "s0033": "1ff57a29d7c9d11bdf61c1b80f2b289b44c1ea844824d4b94a0d52b6ba5fc858",
+            "s0034": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0035": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0036": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0037": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0038": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0039": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0040": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
             "s0041": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0042": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0042": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
             "s0043": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0044": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0044": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
             "s0045": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0046": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0046": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
             "s0047": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0048": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0048": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
             "s0049": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0050": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0050": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
             "s0051": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0052": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0052": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
             "s0053": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0054": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0054": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0055": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0056": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         }
       }
@@ -46897,6 +47298,472 @@
         }
       }
     },
+    "/tags/build in public/": {
+      "sourcePath": "tags/build in public/index.html",
+      "sourceHash": "403948b347973b775433d19b5aaa798e83f4d1b7a565a4a3429c9ab7c948786f",
+      "segments": {
+        "s0001": {
+          "kind": "text",
+          "sourceText": "Posts tagged with \"build in public\" | Ernie.SG",
+          "context": "html > head > title > title",
+          "translationKey": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e"
+        },
+        "s0002": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"build in public\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e"
+        },
+        "s0003": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with build in public.",
+          "context": "html > head > meta",
+          "translationKey": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024"
+        },
+        "s0004": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"build in public\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e"
+        },
+        "s0005": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with build in public.",
+          "context": "html > head > meta",
+          "translationKey": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024"
+        },
+        "s0006": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Logo",
+          "context": "html > body > div > header > div > div > a > img",
+          "translationKey": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c"
+        },
+        "s0007": {
+          "kind": "text",
+          "sourceText": " Ernie.SG ",
+          "context": "html > body > div > header > div > div > a > a",
+          "translationKey": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b"
+        },
+        "s0008": {
+          "kind": "text",
+          "sourceText": " blog ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4"
+        },
+        "s0009": {
+          "kind": "text",
+          "sourceText": " research ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994"
+        },
+        "s0010": {
+          "kind": "text",
+          "sourceText": " about ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3"
+        },
+        "s0011": {
+          "kind": "text",
+          "sourceText": " tags ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a"
+        },
+        "s0012": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862"
+        },
+        "s0013": {
+          "kind": "text",
+          "sourceText": "Toggle menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb"
+        },
+        "s0014": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0015": {
+          "kind": "text",
+          "sourceText": "EN",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba"
+        },
+        "s0016": {
+          "kind": "text",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0017": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0018": {
+          "kind": "text",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0019": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "breadcrumb",
+          "context": "html > body > div > main > div > nav",
+          "translationKey": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95"
+        },
+        "s0020": {
+          "kind": "text",
+          "sourceText": " Tags ",
+          "context": "html > body > div > main > div > nav > ol > li > a > span > span > span",
+          "translationKey": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86"
+        },
+        "s0021": {
+          "kind": "text",
+          "sourceText": " Build in public ",
+          "context": "html > body > div > main > div > nav > ol > li > span > span > span > span",
+          "translationKey": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63"
+        },
+        "s0022": {
+          "kind": "text",
+          "sourceText": " Posts tagged with ",
+          "context": "html > body > div > main > div > div > h1 > h1",
+          "translationKey": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15"
+        },
+        "s0023": {
+          "kind": "text",
+          "sourceText": "Build in public",
+          "context": "html > body > div > main > div > div > span > span > span",
+          "translationKey": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926"
+        },
+        "s0024": {
+          "kind": "text",
+          "sourceText": "\n© 2026 ",
+          "context": "html > body > div > footer > div > div > div > span > span",
+          "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
+        },
+        "s0025": {
+          "kind": "text",
+          "sourceText": "All rights reserved.",
+          "context": "html > body > div > footer > div > div > div > span > span > span",
+          "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
+        },
+        "s0026": {
+          "kind": "text",
+          "sourceText": "Made with care by",
+          "context": "html > body > div > footer > div > div > div > p > span > span",
+          "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
+        },
+        "s0027": {
+          "kind": "text",
+          "sourceText": " enscribe ",
+          "context": "html > body > div > footer > div > div > div > p > a > a",
+          "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
+        },
+        "s0028": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "More",
+          "context": "html > body > div > footer > div > div > nav",
+          "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
+        },
+        "s0029": {
+          "kind": "text",
+          "sourceText": "About",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
+        },
+        "s0030": {
+          "kind": "text",
+          "sourceText": "Tags",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
+        },
+        "s0031": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0032": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0033": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0034": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0035": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0036": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0037": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0038": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0039": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0040": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0041": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0042": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0043": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0044": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0045": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        },
+        "s0046": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        }
+      },
+      "locales": {
+        "zh": {
+          "status": "machine",
+          "sourceHash": "403948b347973b775433d19b5aaa798e83f4d1b7a565a4a3429c9ab7c948786f",
+          "translationKeys": {
+            "s0001": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0002": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0003": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0004": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0005": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ja": {
+          "status": "machine",
+          "sourceHash": "403948b347973b775433d19b5aaa798e83f4d1b7a565a4a3429c9ab7c948786f",
+          "translationKeys": {
+            "s0001": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0002": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0003": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0004": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0005": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ko": {
+          "status": "machine",
+          "sourceHash": "403948b347973b775433d19b5aaa798e83f4d1b7a565a4a3429c9ab7c948786f",
+          "translationKeys": {
+            "s0001": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0002": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0003": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0004": "e2e4f5ea9038fb55462d5cf056ae6c6e1923798f22dd992d94ac387b790f412e",
+            "s0005": "ecb65e3f163e98dabddf71f1d40aa8bd92b7899c015281f22d8494f98f144024",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "0b6c24381a25638834122c5bd5055e5bbcdee4237966dda631b359c0797dde63",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        }
+      }
+    },
     "/tags/cloudflare/": {
       "sourcePath": "tags/cloudflare/index.html",
       "sourceHash": "291bd0a835d504c2802b9e0ce0343f6e307952e9faec915f8497eca31152de4a",
@@ -49229,7 +50096,7 @@
     },
     "/tags/": {
       "sourcePath": "tags/index.html",
-      "sourceHash": "f6953f38982cddce5feb40b927c8b58ade17e85961bf06d8d2a81cecd0e76389",
+      "sourceHash": "2c40fda1caa2fd1327219f2154534a3b60cbf5d3fb04de7433fbf53a0da6aee7",
       "segments": {
         "s0001": {
           "kind": "text",
@@ -49368,9 +50235,9 @@
         },
         "s0022": {
           "kind": "text",
-          "sourceText": "\n(2)\n",
+          "sourceText": "\n(3)\n",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "be51415ed1ff3b9edda0cd9d9c8c36f261a214af6e643a603fffe50a393b75cc"
+          "translationKey": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a"
         },
         "s0023": {
           "kind": "text",
@@ -49398,9 +50265,9 @@
         },
         "s0027": {
           "kind": "text",
-          "sourceText": "Cloudflare",
+          "sourceText": "Build in public",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551"
+          "translationKey": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926"
         },
         "s0028": {
           "kind": "text",
@@ -49410,9 +50277,9 @@
         },
         "s0029": {
           "kind": "text",
-          "sourceText": "Content",
+          "sourceText": "Cloudflare",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f"
+          "translationKey": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551"
         },
         "s0030": {
           "kind": "text",
@@ -49422,9 +50289,9 @@
         },
         "s0031": {
           "kind": "text",
-          "sourceText": "Engineering",
+          "sourceText": "Content",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca"
+          "translationKey": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f"
         },
         "s0032": {
           "kind": "text",
@@ -49434,9 +50301,9 @@
         },
         "s0033": {
           "kind": "text",
-          "sourceText": "Grief",
+          "sourceText": "Engineering",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0"
+          "translationKey": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca"
         },
         "s0034": {
           "kind": "text",
@@ -49446,9 +50313,9 @@
         },
         "s0035": {
           "kind": "text",
-          "sourceText": "Hosting",
+          "sourceText": "Grief",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2"
+          "translationKey": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0"
         },
         "s0036": {
           "kind": "text",
@@ -49458,9 +50325,9 @@
         },
         "s0037": {
           "kind": "text",
-          "sourceText": "Investment",
+          "sourceText": "Hosting",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5"
+          "translationKey": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2"
         },
         "s0038": {
           "kind": "text",
@@ -49470,9 +50337,9 @@
         },
         "s0039": {
           "kind": "text",
-          "sourceText": "Loss",
+          "sourceText": "Investment",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3"
+          "translationKey": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5"
         },
         "s0040": {
           "kind": "text",
@@ -49482,9 +50349,9 @@
         },
         "s0041": {
           "kind": "text",
-          "sourceText": "MCP",
+          "sourceText": "Loss",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa"
+          "translationKey": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3"
         },
         "s0042": {
           "kind": "text",
@@ -49494,9 +50361,9 @@
         },
         "s0043": {
           "kind": "text",
-          "sourceText": "Media",
+          "sourceText": "MCP",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd"
+          "translationKey": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa"
         },
         "s0044": {
           "kind": "text",
@@ -49506,9 +50373,9 @@
         },
         "s0045": {
           "kind": "text",
-          "sourceText": "Microdramas",
+          "sourceText": "Media",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00"
+          "translationKey": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd"
         },
         "s0046": {
           "kind": "text",
@@ -49518,9 +50385,9 @@
         },
         "s0047": {
           "kind": "text",
-          "sourceText": "Personal",
+          "sourceText": "Microdramas",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc"
+          "translationKey": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00"
         },
         "s0048": {
           "kind": "text",
@@ -49530,9 +50397,9 @@
         },
         "s0049": {
           "kind": "text",
-          "sourceText": "Reflection",
+          "sourceText": "outcome as a service",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373"
+          "translationKey": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718"
         },
         "s0050": {
           "kind": "text",
@@ -49542,9 +50409,9 @@
         },
         "s0051": {
           "kind": "text",
-          "sourceText": "Sinking markets",
+          "sourceText": "Personal",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567"
+          "translationKey": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc"
         },
         "s0052": {
           "kind": "text",
@@ -49554,9 +50421,9 @@
         },
         "s0053": {
           "kind": "text",
-          "sourceText": "Tools",
+          "sourceText": "Reflection",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99"
+          "translationKey": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373"
         },
         "s0054": {
           "kind": "text",
@@ -49566,9 +50433,9 @@
         },
         "s0055": {
           "kind": "text",
-          "sourceText": "Web development",
+          "sourceText": "Sinking markets",
           "context": "html > body > div > main > div > div > div > a > span > span",
-          "translationKey": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795"
+          "translationKey": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567"
         },
         "s0056": {
           "kind": "text",
@@ -49578,153 +50445,189 @@
         },
         "s0057": {
           "kind": "text",
+          "sourceText": "spindle",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e"
+        },
+        "s0058": {
+          "kind": "text",
+          "sourceText": "\n(1)\n",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e"
+        },
+        "s0059": {
+          "kind": "text",
+          "sourceText": "Tools",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99"
+        },
+        "s0060": {
+          "kind": "text",
+          "sourceText": "\n(1)\n",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e"
+        },
+        "s0061": {
+          "kind": "text",
+          "sourceText": "Web development",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795"
+        },
+        "s0062": {
+          "kind": "text",
+          "sourceText": "\n(1)\n",
+          "context": "html > body > div > main > div > div > div > a > span > span",
+          "translationKey": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e"
+        },
+        "s0063": {
+          "kind": "text",
           "sourceText": "\n© 2026 ",
           "context": "html > body > div > footer > div > div > div > span > span",
           "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
         },
-        "s0058": {
+        "s0064": {
           "kind": "text",
           "sourceText": "All rights reserved.",
           "context": "html > body > div > footer > div > div > div > span > span > span",
           "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
         },
-        "s0059": {
+        "s0065": {
           "kind": "text",
           "sourceText": "Made with care by",
           "context": "html > body > div > footer > div > div > div > p > span > span",
           "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
         },
-        "s0060": {
+        "s0066": {
           "kind": "text",
           "sourceText": " enscribe ",
           "context": "html > body > div > footer > div > div > div > p > a > a",
           "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
         },
-        "s0061": {
+        "s0067": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "More",
           "context": "html > body > div > footer > div > div > nav",
           "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
         },
-        "s0062": {
+        "s0068": {
           "kind": "text",
           "sourceText": "About",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
         },
-        "s0063": {
+        "s0069": {
           "kind": "text",
           "sourceText": "Tags",
           "context": "html > body > div > footer > div > div > nav > a > a",
           "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
         },
-        "s0064": {
-          "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "GitHub",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
-        },
-        "s0065": {
-          "kind": "attribute",
-          "attribute": "title",
-          "sourceText": "GitHub",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
-        },
-        "s0066": {
-          "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "Twitter",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
-        },
-        "s0067": {
-          "kind": "attribute",
-          "attribute": "title",
-          "sourceText": "Twitter",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
-        },
-        "s0068": {
-          "kind": "attribute",
-          "attribute": "aria-label",
-          "sourceText": "LinkedIn",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
-        },
-        "s0069": {
-          "kind": "attribute",
-          "attribute": "title",
-          "sourceText": "LinkedIn",
-          "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
-        },
         "s0070": {
           "kind": "attribute",
           "attribute": "aria-label",
-          "sourceText": "YouTube",
+          "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
         "s0071": {
           "kind": "attribute",
           "attribute": "title",
-          "sourceText": "YouTube",
+          "sourceText": "GitHub",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
         },
         "s0072": {
           "kind": "attribute",
           "attribute": "aria-label",
-          "sourceText": "Facebook",
+          "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
         "s0073": {
           "kind": "attribute",
           "attribute": "title",
-          "sourceText": "Facebook",
+          "sourceText": "Twitter",
           "context": "html > body > div > footer > div > div > ul > li > a",
-          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
         },
         "s0074": {
           "kind": "attribute",
           "attribute": "aria-label",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0075": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0076": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0077": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0078": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0079": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0080": {
+          "kind": "attribute",
+          "attribute": "aria-label",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0075": {
+        "s0081": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Instagram",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
         },
-        "s0076": {
+        "s0082": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0077": {
+        "s0083": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "Email",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
         },
-        "s0078": {
+        "s0084": {
           "kind": "attribute",
           "attribute": "aria-label",
           "sourceText": "RSS",
           "context": "html > body > div > footer > div > div > ul > li > a",
           "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
         },
-        "s0079": {
+        "s0085": {
           "kind": "attribute",
           "attribute": "title",
           "sourceText": "RSS",
@@ -49735,7 +50638,7 @@
       "locales": {
         "zh": {
           "status": "machine",
-          "sourceHash": "f6953f38982cddce5feb40b927c8b58ade17e85961bf06d8d2a81cecd0e76389",
+          "sourceHash": "2c40fda1caa2fd1327219f2154534a3b60cbf5d3fb04de7433fbf53a0da6aee7",
           "translationKeys": {
             "s0001": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
             "s0002": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
@@ -49758,69 +50661,75 @@
             "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
             "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
             "s0021": "11fb682be0a0233d5fb899721ecfc1827d20f0d2ff2e093310efa61efca8af1c",
-            "s0022": "be51415ed1ff3b9edda0cd9d9c8c36f261a214af6e643a603fffe50a393b75cc",
+            "s0022": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
             "s0023": "c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9",
             "s0024": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
             "s0025": "c490cce12748da484bdfbb95f81d4a1b977fb623b6c4546c0aab8006ce7fee95",
             "s0026": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0027": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
+            "s0027": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
             "s0028": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0029": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
+            "s0029": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
             "s0030": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0031": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
+            "s0031": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
             "s0032": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0033": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
+            "s0033": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
             "s0034": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0035": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
+            "s0035": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
             "s0036": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0037": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
+            "s0037": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
             "s0038": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0039": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
+            "s0039": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
             "s0040": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0041": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
+            "s0041": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
             "s0042": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0043": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
+            "s0043": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
             "s0044": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0045": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
+            "s0045": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
             "s0046": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0047": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
+            "s0047": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
             "s0048": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0049": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
+            "s0049": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
             "s0050": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0051": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
+            "s0051": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
             "s0052": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0053": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0053": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
             "s0054": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0055": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0055": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
             "s0056": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0057": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0058": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0059": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0060": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0061": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0062": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0063": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0064": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0065": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0066": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0067": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0068": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0069": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0070": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0071": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0072": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0073": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0074": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0075": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0076": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0077": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0078": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0079": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0057": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+            "s0058": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0059": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0060": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0061": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0062": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ja": {
           "status": "machine",
-          "sourceHash": "f6953f38982cddce5feb40b927c8b58ade17e85961bf06d8d2a81cecd0e76389",
+          "sourceHash": "2c40fda1caa2fd1327219f2154534a3b60cbf5d3fb04de7433fbf53a0da6aee7",
           "translationKeys": {
             "s0001": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
             "s0002": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
@@ -49843,69 +50752,75 @@
             "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
             "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
             "s0021": "11fb682be0a0233d5fb899721ecfc1827d20f0d2ff2e093310efa61efca8af1c",
-            "s0022": "be51415ed1ff3b9edda0cd9d9c8c36f261a214af6e643a603fffe50a393b75cc",
+            "s0022": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
             "s0023": "c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9",
             "s0024": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
             "s0025": "c490cce12748da484bdfbb95f81d4a1b977fb623b6c4546c0aab8006ce7fee95",
             "s0026": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0027": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
+            "s0027": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
             "s0028": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0029": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
+            "s0029": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
             "s0030": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0031": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
+            "s0031": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
             "s0032": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0033": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
+            "s0033": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
             "s0034": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0035": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
+            "s0035": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
             "s0036": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0037": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
+            "s0037": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
             "s0038": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0039": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
+            "s0039": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
             "s0040": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0041": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
+            "s0041": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
             "s0042": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0043": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
+            "s0043": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
             "s0044": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0045": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
+            "s0045": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
             "s0046": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0047": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
+            "s0047": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
             "s0048": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0049": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
+            "s0049": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
             "s0050": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0051": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
+            "s0051": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
             "s0052": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0053": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0053": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
             "s0054": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0055": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0055": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
             "s0056": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0057": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0058": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0059": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0060": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0061": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0062": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0063": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0064": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0065": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0066": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0067": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0068": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0069": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0070": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0071": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0072": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0073": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0074": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0075": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0076": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0077": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0078": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0079": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0057": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+            "s0058": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0059": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0060": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0061": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0062": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         },
         "ko": {
           "status": "machine",
-          "sourceHash": "f6953f38982cddce5feb40b927c8b58ade17e85961bf06d8d2a81cecd0e76389",
+          "sourceHash": "2c40fda1caa2fd1327219f2154534a3b60cbf5d3fb04de7433fbf53a0da6aee7",
           "translationKeys": {
             "s0001": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
             "s0002": "2d329a3595af9192366bb128eccc2af47ae1db577112872234885b11af7faf59",
@@ -49928,64 +50843,70 @@
             "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
             "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
             "s0021": "11fb682be0a0233d5fb899721ecfc1827d20f0d2ff2e093310efa61efca8af1c",
-            "s0022": "be51415ed1ff3b9edda0cd9d9c8c36f261a214af6e643a603fffe50a393b75cc",
+            "s0022": "01d7f56f47a74c58632e5b07e22d24479b83804da59fe4d3eb50a00f1d30a55a",
             "s0023": "c8e5998f6a3955c21d858936fe05c69621724d7f825c6e17793002a0fa798bf9",
             "s0024": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
             "s0025": "c490cce12748da484bdfbb95f81d4a1b977fb623b6c4546c0aab8006ce7fee95",
             "s0026": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0027": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
+            "s0027": "49e4d03c40d3c44845341a434507a470976352a89ce84776a3088ac668f46926",
             "s0028": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0029": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
+            "s0029": "f9191531404c401686ab9b96e57d6a30825f3487b3375c8b90a2245b65f40551",
             "s0030": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0031": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
+            "s0031": "47bd29075f8b8019f0beec6d86beda7c9bf67aaf05053dcbe0b3bcb63968517f",
             "s0032": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0033": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
+            "s0033": "729bb48d0f86a9e240a9839bf8c50f62f7ed973338514432666cf53c5d30c9ca",
             "s0034": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0035": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
+            "s0035": "0dacf35a795b953b3970f0d6d4eb647801f908023ca4e3ff34846aeedd1771d0",
             "s0036": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0037": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
+            "s0037": "b4ec9bba800b2844765f9e7ed624315e99fe1855e9cfd70580bb1cf20dfbeba2",
             "s0038": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0039": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
+            "s0039": "40754039ee2b7831184ebb4d877f454db6ea8f900a07a93ccb58e65b057ad2f5",
             "s0040": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0041": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
+            "s0041": "df292782b26eef5b4eae081d8fc2dc51a4f48af11fcc31a762a3cec58c312dd3",
             "s0042": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0043": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
+            "s0043": "53f13ae99ed53bd346eb8e1c8cefb7ef8260683b50401caf101360967ea052aa",
             "s0044": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0045": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
+            "s0045": "d357175cfe8978d39b0f86552dcd9404973493e2816101d9ff6c05ee248ef6bd",
             "s0046": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0047": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
+            "s0047": "b3eb9e525a6768f692c4b40ad823d01982aa906a8f96ef288854b0ed2c39ac00",
             "s0048": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0049": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
+            "s0049": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
             "s0050": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0051": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
+            "s0051": "845f9286400f42697fbb196d24c794efa933ce1d20e2b93a7cf770b69f96f6fc",
             "s0052": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0053": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0053": "7538c2135b030e4e91c01e4952055324c62e0182b94d2d0bf0c272f7f55e2373",
             "s0054": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0055": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0055": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
             "s0056": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
-            "s0057": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
-            "s0058": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
-            "s0059": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
-            "s0060": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
-            "s0061": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
-            "s0062": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
-            "s0063": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
-            "s0064": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0065": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
-            "s0066": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0067": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
-            "s0068": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0069": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
-            "s0070": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0071": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
-            "s0072": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0073": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
-            "s0074": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0075": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
-            "s0076": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0077": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
-            "s0078": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
-            "s0079": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+            "s0057": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+            "s0058": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0059": "ea93d6a262ecb87a9fa4d09edbd7654c046597936a8e235fc3949eb01775ff99",
+            "s0060": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0061": "ac7878511967befc09299f577bf6b28dd5413c51da8d96b298c0ab7e5ffd2795",
+            "s0062": "df4fb786844b9aa650c22d7bca480d018d3b8f46882fd174591e4d858b82bd2e",
+            "s0063": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0064": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0065": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0066": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0067": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0068": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0069": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0070": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0071": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0072": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0073": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0074": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0075": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0076": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0077": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0078": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0079": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0080": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0081": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0082": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0083": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0084": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0085": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
           }
         }
       }
@@ -51854,6 +52775,472 @@
         }
       }
     },
+    "/tags/outcome as a service/": {
+      "sourcePath": "tags/outcome as a service/index.html",
+      "sourceHash": "3585f62410eee9aed403de282b2688ecbb6efce26e52ecc74d7861f9c63d98a8",
+      "segments": {
+        "s0001": {
+          "kind": "text",
+          "sourceText": "Posts tagged with \"outcome as a service\" | Ernie.SG",
+          "context": "html > head > title > title",
+          "translationKey": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7"
+        },
+        "s0002": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"outcome as a service\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7"
+        },
+        "s0003": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with outcome as a service.",
+          "context": "html > head > meta",
+          "translationKey": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb"
+        },
+        "s0004": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"outcome as a service\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7"
+        },
+        "s0005": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with outcome as a service.",
+          "context": "html > head > meta",
+          "translationKey": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb"
+        },
+        "s0006": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Logo",
+          "context": "html > body > div > header > div > div > a > img",
+          "translationKey": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c"
+        },
+        "s0007": {
+          "kind": "text",
+          "sourceText": " Ernie.SG ",
+          "context": "html > body > div > header > div > div > a > a",
+          "translationKey": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b"
+        },
+        "s0008": {
+          "kind": "text",
+          "sourceText": " blog ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4"
+        },
+        "s0009": {
+          "kind": "text",
+          "sourceText": " research ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994"
+        },
+        "s0010": {
+          "kind": "text",
+          "sourceText": " about ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3"
+        },
+        "s0011": {
+          "kind": "text",
+          "sourceText": " tags ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a"
+        },
+        "s0012": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862"
+        },
+        "s0013": {
+          "kind": "text",
+          "sourceText": "Toggle menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb"
+        },
+        "s0014": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0015": {
+          "kind": "text",
+          "sourceText": "EN",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba"
+        },
+        "s0016": {
+          "kind": "text",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0017": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0018": {
+          "kind": "text",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0019": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "breadcrumb",
+          "context": "html > body > div > main > div > nav",
+          "translationKey": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95"
+        },
+        "s0020": {
+          "kind": "text",
+          "sourceText": " Tags ",
+          "context": "html > body > div > main > div > nav > ol > li > a > span > span > span",
+          "translationKey": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86"
+        },
+        "s0021": {
+          "kind": "text",
+          "sourceText": " outcome as a service ",
+          "context": "html > body > div > main > div > nav > ol > li > span > span > span > span",
+          "translationKey": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8"
+        },
+        "s0022": {
+          "kind": "text",
+          "sourceText": " Posts tagged with ",
+          "context": "html > body > div > main > div > div > h1 > h1",
+          "translationKey": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15"
+        },
+        "s0023": {
+          "kind": "text",
+          "sourceText": "outcome as a service",
+          "context": "html > body > div > main > div > div > span > span > span",
+          "translationKey": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718"
+        },
+        "s0024": {
+          "kind": "text",
+          "sourceText": "\n© 2026 ",
+          "context": "html > body > div > footer > div > div > div > span > span",
+          "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
+        },
+        "s0025": {
+          "kind": "text",
+          "sourceText": "All rights reserved.",
+          "context": "html > body > div > footer > div > div > div > span > span > span",
+          "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
+        },
+        "s0026": {
+          "kind": "text",
+          "sourceText": "Made with care by",
+          "context": "html > body > div > footer > div > div > div > p > span > span",
+          "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
+        },
+        "s0027": {
+          "kind": "text",
+          "sourceText": " enscribe ",
+          "context": "html > body > div > footer > div > div > div > p > a > a",
+          "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
+        },
+        "s0028": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "More",
+          "context": "html > body > div > footer > div > div > nav",
+          "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
+        },
+        "s0029": {
+          "kind": "text",
+          "sourceText": "About",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
+        },
+        "s0030": {
+          "kind": "text",
+          "sourceText": "Tags",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
+        },
+        "s0031": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0032": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0033": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0034": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0035": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0036": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0037": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0038": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0039": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0040": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0041": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0042": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0043": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0044": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0045": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        },
+        "s0046": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        }
+      },
+      "locales": {
+        "zh": {
+          "status": "machine",
+          "sourceHash": "3585f62410eee9aed403de282b2688ecbb6efce26e52ecc74d7861f9c63d98a8",
+          "translationKeys": {
+            "s0001": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0002": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0003": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0004": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0005": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ja": {
+          "status": "machine",
+          "sourceHash": "3585f62410eee9aed403de282b2688ecbb6efce26e52ecc74d7861f9c63d98a8",
+          "translationKeys": {
+            "s0001": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0002": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0003": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0004": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0005": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ko": {
+          "status": "machine",
+          "sourceHash": "3585f62410eee9aed403de282b2688ecbb6efce26e52ecc74d7861f9c63d98a8",
+          "translationKeys": {
+            "s0001": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0002": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0003": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0004": "4b7eae9a1265483ca77a368b099443b13a953bac73e9f9e2d812f07a8e1279a7",
+            "s0005": "4dcbf1659dd52379b4a59e1c3de39b137abe0fcc8181cf83824931bc6d89e3eb",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "69813d93d54fb1d95d7a1c4c850e5befd84e4bcc1888fab98b4f061f5f8fb8a8",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "7cd57afcaac1a999f5ca97cac6e91451322e17cce5cedff517a4ebfd246d4718",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        }
+      }
+    },
     "/tags/personal/": {
       "sourcePath": "tags/personal/index.html",
       "sourceHash": "ad912afe31470ff1aeaf2471f4e02e061a2fd66d0debb21d0ae70a4fda17afca",
@@ -53225,6 +54612,472 @@
             "s0021": "1be4c8378440686d4a1e249aedfe00d683b55e651dc49248eddbdb42395a2af4",
             "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
             "s0023": "91fd768b9643b61e1a4ec895cd16c97b64b25e7ab2d7ad363da2306ec2ad2567",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        }
+      }
+    },
+    "/tags/spindle/": {
+      "sourcePath": "tags/spindle/index.html",
+      "sourceHash": "833672557e14d2175b44901b2d5d4ac7af48c8d6045d014298b8c99f99a069d4",
+      "segments": {
+        "s0001": {
+          "kind": "text",
+          "sourceText": "Posts tagged with \"spindle\" | Ernie.SG",
+          "context": "html > head > title > title",
+          "translationKey": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd"
+        },
+        "s0002": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"spindle\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd"
+        },
+        "s0003": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with spindle.",
+          "context": "html > head > meta",
+          "translationKey": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced"
+        },
+        "s0004": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "Posts tagged with \"spindle\" | Ernie.SG",
+          "context": "html > head > meta",
+          "translationKey": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd"
+        },
+        "s0005": {
+          "kind": "attribute",
+          "attribute": "content",
+          "sourceText": "A collection of posts tagged with spindle.",
+          "context": "html > head > meta",
+          "translationKey": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced"
+        },
+        "s0006": {
+          "kind": "attribute",
+          "attribute": "alt",
+          "sourceText": "Logo",
+          "context": "html > body > div > header > div > div > a > img",
+          "translationKey": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c"
+        },
+        "s0007": {
+          "kind": "text",
+          "sourceText": " Ernie.SG ",
+          "context": "html > body > div > header > div > div > a > a",
+          "translationKey": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b"
+        },
+        "s0008": {
+          "kind": "text",
+          "sourceText": " blog ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4"
+        },
+        "s0009": {
+          "kind": "text",
+          "sourceText": " research ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994"
+        },
+        "s0010": {
+          "kind": "text",
+          "sourceText": " about ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3"
+        },
+        "s0011": {
+          "kind": "text",
+          "sourceText": " tags ",
+          "context": "html > body > div > header > div > div > div > nav > a > a",
+          "translationKey": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a"
+        },
+        "s0012": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862"
+        },
+        "s0013": {
+          "kind": "text",
+          "sourceText": "Toggle menu",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb"
+        },
+        "s0014": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0015": {
+          "kind": "text",
+          "sourceText": "EN",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba"
+        },
+        "s0016": {
+          "kind": "text",
+          "sourceText": "Change language",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d"
+        },
+        "s0017": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0018": {
+          "kind": "text",
+          "sourceText": "Toggle theme",
+          "context": "html > body > div > header > div > div > div > astro-island > button > span > span",
+          "translationKey": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74"
+        },
+        "s0019": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "breadcrumb",
+          "context": "html > body > div > main > div > nav",
+          "translationKey": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95"
+        },
+        "s0020": {
+          "kind": "text",
+          "sourceText": " Tags ",
+          "context": "html > body > div > main > div > nav > ol > li > a > span > span > span",
+          "translationKey": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86"
+        },
+        "s0021": {
+          "kind": "text",
+          "sourceText": " spindle ",
+          "context": "html > body > div > main > div > nav > ol > li > span > span > span > span",
+          "translationKey": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f"
+        },
+        "s0022": {
+          "kind": "text",
+          "sourceText": " Posts tagged with ",
+          "context": "html > body > div > main > div > div > h1 > h1",
+          "translationKey": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15"
+        },
+        "s0023": {
+          "kind": "text",
+          "sourceText": "spindle",
+          "context": "html > body > div > main > div > div > span > span > span",
+          "translationKey": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e"
+        },
+        "s0024": {
+          "kind": "text",
+          "sourceText": "\n© 2026 ",
+          "context": "html > body > div > footer > div > div > div > span > span",
+          "translationKey": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014"
+        },
+        "s0025": {
+          "kind": "text",
+          "sourceText": "All rights reserved.",
+          "context": "html > body > div > footer > div > div > div > span > span > span",
+          "translationKey": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5"
+        },
+        "s0026": {
+          "kind": "text",
+          "sourceText": "Made with care by",
+          "context": "html > body > div > footer > div > div > div > p > span > span",
+          "translationKey": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa"
+        },
+        "s0027": {
+          "kind": "text",
+          "sourceText": " enscribe ",
+          "context": "html > body > div > footer > div > div > div > p > a > a",
+          "translationKey": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d"
+        },
+        "s0028": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "More",
+          "context": "html > body > div > footer > div > div > nav",
+          "translationKey": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996"
+        },
+        "s0029": {
+          "kind": "text",
+          "sourceText": "About",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1"
+        },
+        "s0030": {
+          "kind": "text",
+          "sourceText": "Tags",
+          "context": "html > body > div > footer > div > div > nav > a > a",
+          "translationKey": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8"
+        },
+        "s0031": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0032": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "GitHub",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb"
+        },
+        "s0033": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0034": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Twitter",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc"
+        },
+        "s0035": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0036": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "LinkedIn",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b"
+        },
+        "s0037": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0038": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "YouTube",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c"
+        },
+        "s0039": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0040": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Facebook",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85"
+        },
+        "s0041": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0042": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Instagram",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6"
+        },
+        "s0043": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0044": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "Email",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621"
+        },
+        "s0045": {
+          "kind": "attribute",
+          "attribute": "aria-label",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        },
+        "s0046": {
+          "kind": "attribute",
+          "attribute": "title",
+          "sourceText": "RSS",
+          "context": "html > body > div > footer > div > div > ul > li > a",
+          "translationKey": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+        }
+      },
+      "locales": {
+        "zh": {
+          "status": "machine",
+          "sourceHash": "833672557e14d2175b44901b2d5d4ac7af48c8d6045d014298b8c99f99a069d4",
+          "translationKeys": {
+            "s0001": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0002": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0003": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0004": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0005": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ja": {
+          "status": "machine",
+          "sourceHash": "833672557e14d2175b44901b2d5d4ac7af48c8d6045d014298b8c99f99a069d4",
+          "translationKeys": {
+            "s0001": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0002": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0003": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0004": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0005": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
+            "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
+            "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
+            "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",
+            "s0027": "f19a3ee5bd67f206ea3570bba34ec97cf1b63f7b7177cc4cf0d787e1a59c543d",
+            "s0028": "d47d7cb0e4f8fd2be5ee07826694c18917d83ca77d0a01698582d05f432db996",
+            "s0029": "4efca0d10c5feb8e9b35eb1d994f2905bb71714e6a271f511d713b539ea5faa1",
+            "s0030": "1331275bc537b4c2bf1e46f7275677967515342e30b572e6852fa6f51b831fe8",
+            "s0031": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0032": "f911e414cf6bdfc595532ab166b5ba0f63d73c021452fcdacbda363dda6ad8fb",
+            "s0033": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0034": "bcd18ead5fa830127187d499e97e7a4dc8f641ec34d8c7e9f9f24deae2e39fdc",
+            "s0035": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0036": "dd84425b72da12c6c828339ce814342daceac705b50d42e377e1acebf8f2320b",
+            "s0037": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0038": "fb7accfff8c6f8ea9b03c91ee5576d0d08080e9ba35918d801aaeb6020dbc88c",
+            "s0039": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0040": "d41f5b4977ee05c6b61b3b5f054784628f5cd1cbe06a82a5484d1e6de6eefe85",
+            "s0041": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0042": "bad57ef7837c8e6bf99c2a5935cc9d6fe5324a53d88744ad5551db0e46b03cd6",
+            "s0043": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0044": "969ccbd3cf6300ecd5c880459d81ae9027df7517563184a1b8b15282db230621",
+            "s0045": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b",
+            "s0046": "3bcf9f2bf07261cf5b1c7b72e8b006666acb662b93c7a572ef352ed9edb21a8b"
+          }
+        },
+        "ko": {
+          "status": "machine",
+          "sourceHash": "833672557e14d2175b44901b2d5d4ac7af48c8d6045d014298b8c99f99a069d4",
+          "translationKeys": {
+            "s0001": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0002": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0003": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0004": "cb8ec78228b99230e939e8f9923826a25fa0abb0737706929ffc2f43e2683ebd",
+            "s0005": "b5568a58a13bb90eff792d680b0b322d014b3ed39bb351b2a15a015b22da8ced",
+            "s0006": "d707dc2f1936efd8707060cbe7cdeaba8f250967ecd32fcd56e2491c7f18e52c",
+            "s0007": "893c2ff2d764d54db0a0fd167a35b5c6bdbb4fdbb5b38e8c1ef7a8dd33ce133b",
+            "s0008": "ded73f888faaf6a7afa5af2e221f174de30fa3fc3b1375a434a632ae54f8fda4",
+            "s0009": "813b809be3d9aa8d5e5ead349ed7dc8de0c253fb1e71574f7b6fdfea9e9a6994",
+            "s0010": "a4826b85ca8fd4cd136584a523e842ecd8e7c12bb747b23bcd2724fc1a7514f3",
+            "s0011": "269ff9ac6c88e5550fb7f304fb69319ada2eb7192c3656aa6a911cc7d8bd284a",
+            "s0012": "99af6606ff9d6cd5154d4d4e9c21e325086d3e904677cdb41d363c8a3480f862",
+            "s0013": "c02651240c87b47d3319c6878d0c2ec16eadc4d6932b9f4f35955326463d4cdb",
+            "s0014": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0015": "69374b09b1681162ba2d6bba92d6a167ea5ca5921eb172eb173e999e3be5d8ba",
+            "s0016": "009ed110badf6e7bb1d9dc5e70d1dbf1d3dcb8283c23508477ee7cb2b730f07d",
+            "s0017": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0018": "6026719f081a8f347126811d4076f41b445d5f7c2e329e72bf7cfc0decfa2e74",
+            "s0019": "d6dc6b5ebe192c2ce1c052797a0907948cf02874ef63d2b2ac40c2380ab90c95",
+            "s0020": "39354e92e28ab83a2143d18dedbe0342916383f3c76b7c3c61a3e8c2b9da1e86",
+            "s0021": "a3ffa058a7c1c1cb62abe7755a87817ca0504ad0048a91af4a21d80329e09f8f",
+            "s0022": "c8bd37ceca680cd4e58beefc11aa76d08687f918d20551659dc8778aca23fd15",
+            "s0023": "3daaec9e346786af2fe1cb2762b7f1541573fb855aab46574eedf0160f377e8e",
             "s0024": "d752edcd4537e08eb487d2cf404b9ebac1dc36afd50b485b8bad39511fdb5014",
             "s0025": "21f29224bb655170d51b49b23015b779434d5540dc2825f5adf9a2bbc131b5f5",
             "s0026": "e755aa0fa5e658debac3dfa4beb492c13b121d5f9d966339d2a2d41879bd43aa",

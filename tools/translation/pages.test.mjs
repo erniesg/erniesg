@@ -456,6 +456,44 @@ describe('owned page localization catalog', () => {
     expect(generated.generatedRoutes).toEqual([])
   })
 
+  it('reuses canonical claude-sonnet machine memory and records the generating provider', async () => {
+    const sourceText = 'This substantive paragraph needs a natural localized translation.'
+    const sourceHash = crypto.createHash('sha256').update(sourceText).digest('hex')
+    const catalog = {
+      strings: { [sourceHash]: { sourceText, sourceHash } },
+      translations: {
+        zh: {
+          [sourceHash]: { text: '这段内容需要自然的本地化翻译。', status: 'machine', sourceHash, provenance: { provider: 'claude-sonnet' } },
+        },
+      },
+      pages: {
+        '/sonnet/': { sourceHash: 'sonnet-page', locales: { zh: { status: 'machine', sourceHash: 'sonnet-page', translationKeys: { s0001: sourceHash } } }, segments: { s0001: { sourceText, translationKey: sourceHash } } },
+      },
+    }
+    let calls = 0
+    const reused = await generatePageTranslations({
+      catalog,
+      locale: 'zh',
+      batchLimit: 2,
+      runStructuredJson: async () => {
+        calls += 1
+        return { translations: {} }
+      },
+    })
+    expect(calls).toBe(0)
+    expect(reused.generatedRoutes).toEqual([])
+
+    const fresh = { ...catalog, translations: { zh: {} }, pages: { '/sonnet/': { ...catalog.pages['/sonnet/'], locales: {} } } }
+    const generated = await generatePageTranslations({
+      catalog: fresh,
+      locale: 'zh',
+      batchLimit: 2,
+      provider: 'claude-sonnet',
+      runStructuredJson: async () => ({ translations: { s0001: '这段内容需要自然的本地化翻译。' } }),
+    })
+    expect(generated.catalog.translations.zh[sourceHash].provenance.provider).toBe('claude-sonnet')
+  })
+
   it('rewrites only known owned or native locale links and keeps query and fragment state', () => {
     const routes = new Map([
       ['/about/', { en: '/about/', zh: '/about/zh/' }],

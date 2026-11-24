@@ -33,7 +33,7 @@ const blog = defineCollection({
       translationKey: z.string().optional(),
       translationStatus: z.enum(['machine', 'edited', 'final']).optional(),
       translationSource: z
-        .enum(['codex', 'human', 'imported-legacy'])
+        .enum(['codex', 'claude-sonnet', 'human', 'imported-legacy'])
         .optional(),
       draft: z.boolean().optional(),
     }),

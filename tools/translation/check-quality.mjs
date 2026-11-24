@@ -1,7 +1,6 @@
 import { fileURLToPath } from 'node:url'
 import fs from 'node:fs/promises'
 import {
-  canWriteExistingTarget,
   getManifestTarget,
   hasOwnership,
   listTargetSidecars,
@@ -20,6 +19,20 @@ import {
 } from './prompts.mjs'
 import { createStructuredReview, providerConfigFor } from './providers.mjs'
 import { isCodexUsageLimitError } from './codex-cli.mjs'
+
+// Publication verifies unchanged content; write eligibility is a separate safety gate.
+export function machineTargetIntegrityIssues({
+  filePath,
+  target,
+  currentText,
+}) {
+  if (!target)
+    return [`${filePath}: machine translation missing manifest target`]
+  if (!target.targetSha256 || target.targetSha256 !== sha256(currentText)) {
+    return [`${filePath}: machine target hash drifted from manifest`]
+  }
+  return []
+}
 
 function reportPathFor(filePath) {
   return `.translation/reports/${filePath
@@ -296,30 +309,24 @@ export async function checkTranslationQuality({
         currentStyleGuideSha256: styleContext.styleGuideSha256,
         currentRubricSha256: styleContext.rubricSha256,
       }
-      if (!target) {
-        errors.push(`${filePath}: machine translation missing manifest target`)
-      } else if (
-        !canWriteExistingTarget({
-          frontmatter: file.frontmatter,
-          manifestTarget: target,
+      errors.push(
+        ...machineTargetIntegrityIssues({
+          filePath,
+          target,
           currentText: file.raw,
-        })
-      ) {
-        errors.push(`${filePath}: machine target hash drifted from manifest`)
-      } else if (target.targetSha256 !== sha256(file.raw)) {
-        errors.push(`${filePath}: manifest targetSha256 mismatch`)
-      }
+        }),
+      )
 
       const needsReview = Boolean(
         target &&
-          (refreshAllReviews ||
-            reviewMetadataIssues({
-              config,
-              target,
-              currentTargetSha256: sha256(file.raw),
-              ...reviewContext,
-            }).length > 0 ||
-            (target.unresolvedResearch ?? []).length > 0),
+        (refreshAllReviews ||
+          reviewMetadataIssues({
+            config,
+            target,
+            currentTargetSha256: sha256(file.raw),
+            ...reviewContext,
+          }).length > 0 ||
+          (target.unresolvedResearch ?? []).length > 0),
       )
 
       if (target && refreshReview && needsReview && errors.length === 0) {

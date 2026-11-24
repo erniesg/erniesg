@@ -1,0 +1,627 @@
+---
+import Breadcrumbs from '@/components/Breadcrumbs.astro'
+import Container from '@/components/Container.astro'
+import {
+  ATLAS_DESTINATIONS,
+  ATLAS_REGIONS,
+  COUNTRIES_TOTAL,
+  COUNTRIES_VISITED,
+} from '@/data/atlas'
+import Layout from '@/layouts/Layout.astro'
+import { flagUrl } from '@/lib/atlas/geo'
+import { getStaticTranslation } from '@/lib/i18n'
+
+const t = (key: string) => getStaticTranslation(key, 'en')
+const legend = [
+  { status: 'visited', key: 'atlas.visited' },
+  { status: 'easy', key: 'atlas.easy' },
+  { status: 'special', key: 'atlas.special' },
+  { status: 'required', key: 'atlas.required' },
+]
+const statusLabels = legend
+const regions = ATLAS_REGIONS.map((region) => ({
+  region,
+  places: ATLAS_DESTINATIONS.filter((d) => d.region === region).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  ),
+}))
+---
+
+<Layout
+  title={t('atlas.title')}
+  description={`A 3D atlas of the ${COUNTRIES_VISITED} countries Ernie has visited, and where a Singapore passport could go next.`}
+>
+  <Container class="flex flex-col gap-y-6">
+    <Breadcrumbs
+      items={[
+        {
+          label: t('atlas.title'),
+          icon: 'lucide:globe',
+          i18nKey: 'atlas.title',
+        },
+      ]}
+    />
+
+    <header class="flex items-end justify-between gap-6">
+      <div>
+        <h1
+          class="text-3xl font-semibold tracking-tight"
+          data-i18n-key="atlas.title"
+        >
+          {t('atlas.title')}
+        </h1>
+        <p class="mt-1 text-muted-foreground" data-i18n-key="atlas.lead">
+          {t('atlas.lead')}
+        </p>
+      </div>
+      <p class="shrink-0 text-right">
+        <span
+          class="atlas-count block text-4xl font-semibold tabular-nums tracking-tight"
+        >
+          {COUNTRIES_VISITED}<span class="atlas-total">/{COUNTRIES_TOTAL}</span>
+        </span>
+        <span
+          class="text-xs text-muted-foreground"
+          data-i18n-key="atlas.countries"
+        >
+          {t('atlas.countries')}
+        </span>
+      </p>
+    </header>
+
+    <div class="atlas-stage" data-atlas-stage data-state="loading">
+      <canvas data-atlas-canvas role="img" aria-label={t('atlas.canvas')}
+      ></canvas>
+      <div class="atlas-tip" data-atlas-tip hidden>
+        <img
+          class="atlas-flag"
+          alt=""
+          width="16"
+          height="12"
+          data-atlas-tip-flag
+        />
+        <span data-atlas-tip-name></span>
+      </div>
+      <div class="atlas-line-km" data-atlas-line-km hidden></div>
+      <div class="atlas-pin" data-atlas-pin="home" hidden>
+        <img
+          class="atlas-flag"
+          alt=""
+          width="16"
+          height="12"
+          src={flagUrl('Singapore')}
+        />
+        <span data-atlas-pin-name></span>
+      </div>
+      <div class="atlas-pin" data-atlas-pin="selected" hidden>
+        <img
+          class="atlas-flag"
+          alt=""
+          width="16"
+          height="12"
+          data-atlas-pin-flag
+        />
+        <span data-atlas-pin-name></span>
+      </div>
+      <p
+        class="atlas-fallback text-sm text-muted-foreground"
+        data-i18n-key="atlas.fallback"
+      >
+        {t('atlas.fallback')}
+      </p>
+    </div>
+
+    <ul
+      class="flex flex-wrap justify-center gap-x-5 gap-y-1 text-xs text-muted-foreground"
+    >
+      <li class="w-full text-center sm:w-auto" data-i18n-key="atlas.legend">
+        {t('atlas.legend')}
+      </li>
+      {
+        legend.map(({ status, key }) => (
+          <li class="flex items-center gap-1.5">
+            <span class="atlas-swatch" data-status={status} />
+            <span data-i18n-key={key}>{t(key)}</span>
+          </li>
+        ))
+      }
+    </ul>
+
+    <section class="atlas-card" aria-live="polite" data-atlas-card>
+      <p
+        class="text-sm text-muted-foreground"
+        data-atlas-empty
+        data-i18n-key="atlas.empty"
+      >
+        {t('atlas.empty')}
+      </p>
+      <div data-atlas-detail hidden>
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2
+              class="flex items-center gap-2 text-xl font-semibold tracking-tight"
+            >
+              <img
+                class="atlas-flag atlas-flag-lg"
+                alt=""
+                width="28"
+                height="21"
+                data-atlas-flag
+              />
+              <span data-atlas-name></span>
+            </h2>
+            <p
+              class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground"
+            >
+              <span class="atlas-swatch" data-atlas-swatch></span>
+              {
+                statusLabels.map(({ status, key }) => (
+                  <span data-atlas-status={status} data-i18n-key={key} hidden>
+                    {t(key)}
+                  </span>
+                ))
+              }
+              <span data-atlas-status="home" data-i18n-key="atlas.home" hidden>
+                {t('atlas.home')}
+              </span>
+              <span data-atlas-flag-note="territory" hidden>
+                · <span data-i18n-key="atlas.territory"
+                  >{t('atlas.territory')}</span
+                >
+              </span>
+            </p>
+          </div>
+          <p class="shrink-0 text-right" data-atlas-route hidden>
+            <span
+              class="block text-xl font-semibold tabular-nums tracking-tight"
+              data-atlas-km></span>
+            <span
+              class="flex items-center justify-end gap-1.5 text-xs text-muted-foreground"
+            >
+              <img
+                class="atlas-flag"
+                alt=""
+                width="16"
+                height="12"
+                src={flagUrl('Singapore')}
+              />
+              <span data-i18n-key="atlas.fromSingapore"
+                >{t('atlas.fromSingapore')}</span
+              >
+            </span>
+          </p>
+        </div>
+        <p class="mt-3 text-sm" data-atlas-places hidden></p>
+        <p class="mt-3 text-sm text-muted-foreground" data-atlas-note hidden>
+        </p>
+        <button
+          type="button"
+          class="mt-3 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+          data-atlas-clear
+          data-i18n-key="atlas.clear">{t('atlas.clear')}</button
+        >
+      </div>
+    </section>
+
+    <section class="grid gap-6 sm:grid-cols-3" aria-label={t('atlas.visited')}>
+      {
+        regions.map(({ region, places }) => (
+          <div>
+            <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {region}
+            </h2>
+            <ul class="flex flex-col">
+              {places.map((place) => (
+                <li>
+                  <button
+                    type="button"
+                    class="atlas-place"
+                    data-atlas-place={place.name}
+                    aria-pressed="false"
+                  >
+                    <img
+                      class="atlas-flag"
+                      alt=""
+                      width="20"
+                      height="15"
+                      loading="lazy"
+                      src={flagUrl(place.name)}
+                    />
+                    <span data-atlas-label>{place.name}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </section>
+  </Container>
+</Layout>
+
+<style>
+  .atlas-stage {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1;
+    max-height: 86vh;
+    margin-inline: auto;
+  }
+  .atlas-stage canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    /* Keeps vertical swipes scrolling the page on touch screens. */
+    touch-action: pan-y;
+    /* The resting globe fits inside this; zoomed views read as a round lens. */
+    mask-image: radial-gradient(
+      circle closest-side,
+      #000 92%,
+      transparent 100%
+    );
+    outline: none;
+    opacity: 0;
+    transition: opacity 0.7s ease;
+  }
+  .atlas-stage[data-state='ready'] canvas {
+    opacity: 1;
+  }
+  .atlas-stage[data-state='fallback'] {
+    aspect-ratio: auto;
+  }
+  .atlas-stage[data-state='fallback'] canvas {
+    display: none;
+  }
+  .atlas-fallback {
+    display: none;
+  }
+  .atlas-stage[data-state='fallback'] .atlas-fallback {
+    display: block;
+  }
+  .atlas-tip,
+  .atlas-pin {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.375rem;
+    background: hsl(var(--foreground));
+    color: hsl(var(--background));
+    font-size: 0.75rem;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .atlas-tip[hidden],
+  .atlas-pin[hidden],
+  .atlas-line-km[hidden] {
+    display: none;
+  }
+  .atlas-line-km {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+    padding: 0.1rem 0.45rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 9999px;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-size: 0.75rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .atlas-tip {
+    transform: translate(-50%, calc(-100% - 12px));
+  }
+  .atlas-flag {
+    flex: none;
+    width: 1rem;
+    height: 0.75rem;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px hsl(var(--foreground) / 0.12);
+    object-fit: cover;
+  }
+  .atlas-flag-lg {
+    width: 1.75rem;
+    height: 1.3125rem;
+    border-radius: 3px;
+  }
+  .atlas-total {
+    font-size: 0.5em;
+    font-weight: 500;
+    color: hsl(var(--muted-foreground));
+  }
+  .atlas-swatch {
+    display: inline-block;
+    flex: none;
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 9999px;
+  }
+  .atlas-swatch[data-status='visited'] {
+    background: #078969;
+  }
+  .atlas-swatch[data-status='easy'] {
+    background: #3f8fd0;
+  }
+  .atlas-swatch[data-status='special'] {
+    background: #b9c4cd;
+  }
+  .atlas-swatch[data-status='required'] {
+    background: #7b2d8e;
+  }
+  .atlas-count {
+    color: #078969;
+  }
+  :global(.dark) .atlas-count,
+  :global(.dark) .atlas-swatch[data-status='visited'] {
+    color: #1fc79b;
+  }
+  :global(.dark) .atlas-swatch[data-status='visited'] {
+    background: #1fc79b;
+  }
+  :global(.dark) .atlas-swatch[data-status='easy'] {
+    background: #3f8fd0;
+  }
+  :global(.dark) .atlas-swatch[data-status='special'] {
+    background: #56636e;
+  }
+  :global(.dark) .atlas-swatch[data-status='required'] {
+    background: #e6a3ff;
+  }
+  .atlas-card {
+    min-height: 5.5rem;
+    padding-block: 1rem;
+    border-block: 1px solid hsl(var(--border));
+  }
+  .atlas-place {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding-block: 0.25rem;
+    font-size: 0.875rem;
+    text-align: left;
+    transition: color 0.15s ease;
+  }
+  .atlas-place:hover {
+    color: #078969;
+  }
+  :global(.dark) .atlas-place:hover {
+    color: #1fc79b;
+  }
+  .atlas-place[aria-pressed='true'] {
+    color: #b8650a;
+    font-weight: 500;
+  }
+  :global(.dark) .atlas-place[aria-pressed='true'] {
+    color: #ffb04a;
+  }
+</style>
+
+<script>
+  import { ATLAS_DESTINATIONS } from '@/data/atlas'
+  import type { AtlasFeature } from '@/lib/atlas/geo'
+  import {
+    buildAtlasFeatures,
+    distanceKm,
+    flagUrl,
+    statusOf,
+  } from '@/lib/atlas/geo'
+  import type { Globe, GlobeAnchor, GlobeAnchors } from '@/lib/atlas/globe'
+
+  let teardown: (() => void) | undefined
+
+  function mount() {
+    teardown?.()
+    teardown = undefined
+    const stage = document.querySelector<HTMLElement>('[data-atlas-stage]')
+    if (!stage) return
+    const canvas = stage.querySelector<HTMLCanvasElement>('[data-atlas-canvas]')
+    const tip = stage.querySelector<HTMLElement>('[data-atlas-tip]')
+    const card = document.querySelector<HTMLElement>('[data-atlas-card]')
+    if (!canvas || !tip || !card) return
+    const part = <T extends HTMLElement>(selector: string) =>
+      card.querySelector<T>(selector)!
+
+    const buttons = [
+      ...document.querySelectorAll<HTMLButtonElement>('[data-atlas-place]'),
+    ]
+    let globe: Globe | undefined
+    let features: AtlasFeature[] = []
+    let disposed = false
+    const homePin = stage.querySelector<HTMLElement>('[data-atlas-pin="home"]')!
+    const selectedPin = stage.querySelector<HTMLElement>(
+      '[data-atlas-pin="selected"]',
+    )!
+    const lineKm = stage.querySelector<HTMLElement>('[data-atlas-line-km]')!
+    let current: string | undefined
+    const setFlag = (image: HTMLImageElement, name: string) => {
+      const url = flagUrl(name)
+      image.hidden = !url
+      if (url) image.src = url
+    }
+    /** The list's label is translated on localized pages; the attribute never is. */
+    const labelOf = (name: string) =>
+      buttons
+        .find((b) => b.dataset.atlasPlace === name)
+        ?.querySelector('[data-atlas-label]')
+        ?.textContent?.trim() ?? name
+
+    const show = (name: string | undefined) => {
+      current = name
+      if (name) tip.hidden = true
+      for (const button of buttons) {
+        button.setAttribute(
+          'aria-pressed',
+          String(button.dataset.atlasPlace === name),
+        )
+      }
+      part('[data-atlas-empty]').hidden = Boolean(name)
+      part('[data-atlas-detail]').hidden = !name
+      if (!name) return
+      const destination = ATLAS_DESTINATIONS.find((d) => d.name === name)
+      const status = statusOf(name)
+      part('[data-atlas-name]').textContent = labelOf(name)
+      setFlag(part<HTMLImageElement>('[data-atlas-flag]'), name)
+      homePin.querySelector('[data-atlas-pin-name]')!.textContent =
+        labelOf('Singapore')
+      selectedPin.querySelector('[data-atlas-pin-name]')!.textContent =
+        labelOf(name)
+      setFlag(
+        selectedPin.querySelector<HTMLImageElement>('[data-atlas-pin-flag]')!,
+        name,
+      )
+      const here = features.find((f) => f.name === 'Singapore')
+      const there = features.find((f) => f.name === name)
+      const route = part('[data-atlas-route]')
+      route.hidden = !here || !there || here === there
+      if (here && there) {
+        const km = `≈ ${distanceKm(here, there).toLocaleString('en')} km`
+        part('[data-atlas-km]').textContent = km
+        lineKm.textContent = km
+      }
+      part('[data-atlas-swatch]').dataset.status = status
+      const label = destination?.home ? 'home' : status
+      card
+        .querySelectorAll<HTMLElement>('[data-atlas-status]')
+        .forEach((item) => {
+          item.hidden = item.dataset.atlasStatus !== label
+        })
+      part('[data-atlas-flag-note]').hidden = !destination?.territory
+      const places = part('[data-atlas-places]')
+      places.textContent = destination?.places.join(' · ') ?? ''
+      places.hidden = !destination?.places.length
+      const note = part('[data-atlas-note]')
+      note.textContent = destination?.note ?? ''
+      note.hidden = !destination?.note
+    }
+
+    const onList = (event: Event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>(
+        '[data-atlas-place]',
+      )
+      if (button) {
+        const name = button.dataset.atlasPlace
+        const next =
+          button.getAttribute('aria-pressed') === 'true' ? undefined : name
+        show(next)
+        globe?.select(next)
+        if (next && globe)
+          stage.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      if ((event.target as HTMLElement).closest('[data-atlas-clear]')) {
+        show(undefined)
+        globe?.select(undefined)
+      }
+    }
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        show(undefined)
+        globe?.select(undefined)
+      }
+    }
+    document.addEventListener('click', onList)
+    document.addEventListener('keydown', onKey)
+
+    const onHover = (
+      feature: AtlasFeature | undefined,
+      x: number,
+      y: number,
+    ) => {
+      // A selected route already labels the globe, so hovering only lifts the country.
+      tip.hidden = !feature || Boolean(current)
+      if (!feature || current) return
+      const rect = stage.getBoundingClientRect()
+      tip.querySelector('[data-atlas-tip-name]')!.textContent = labelOf(
+        feature.name,
+      )
+      setFlag(
+        tip.querySelector<HTMLImageElement>('[data-atlas-tip-flag]')!,
+        feature.name,
+      )
+      tip.style.left = `${x - rect.left}px`
+      tip.style.top = `${y - rect.top}px`
+    }
+
+    const place = (
+      pin: HTMLElement,
+      anchor: GlobeAnchor | undefined,
+      above: boolean,
+    ) => {
+      pin.hidden = !anchor?.visible
+      if (!anchor?.visible) return
+      const lift = above ? 'calc(-100% - 14px)' : '14px'
+      pin.style.transform = `translate(${anchor.x}px, ${anchor.y}px) translate(-50%, ${lift})`
+    }
+    // Whichever end is higher on screen labels upward, so close neighbours don't collide.
+    const onAnchors = ({ home, selected, midpoint }: GlobeAnchors) => {
+      lineKm.hidden = !midpoint?.visible || !home || !selected
+      if (midpoint?.visible && home && selected) {
+        // Sits beside the line, on the side away from the globe's centre, clear of the plane.
+        const dx = selected.x - home.x
+        const dy = selected.y - home.y
+        const length = Math.hypot(dx, dy) || 1
+        let nx = -dy / length
+        let ny = dx / length
+        const outX = midpoint.x - stage.clientWidth / 2
+        const outY = midpoint.y - stage.clientHeight / 2
+        if (nx * outX + ny * outY < 0) {
+          nx = -nx
+          ny = -ny
+        }
+        // A short hop has the two route labels stacked on it, so step out sideways past them.
+        const short = length < 150
+        const x = midpoint.x + (short ? Math.sign(outX || 1) * 118 : nx * 44)
+        const y = midpoint.y + (short ? 0 : ny * 26)
+        lineKm.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`
+      }
+      const selectedAbove = !home || !selected || selected.y <= home.y
+      place(selectedPin, selected, selectedAbove)
+      place(homePin, home, !selectedAbove)
+    }
+
+    // Everything heavy loads only here, so other pages never pay for the globe.
+    Promise.all([
+      import('@/lib/atlas/globe'),
+      import('world-atlas/countries-50m.json'),
+    ])
+      .then(([{ createGlobe }, world]) => {
+        if (disposed) return
+        features = buildAtlasFeatures(
+          world.default as unknown as Parameters<typeof buildAtlasFeatures>[0],
+        )
+        globe = createGlobe({
+          canvas,
+          features,
+          onHover,
+          onAnchors,
+          onSelect: (feature) => show(feature?.name),
+        })
+        stage.dataset.state = 'ready'
+      })
+      .catch((error) => {
+        console.error('Atlas globe failed to start', error)
+        stage.dataset.state = 'fallback'
+      })
+
+    teardown = () => {
+      disposed = true
+      document.removeEventListener('click', onList)
+      document.removeEventListener('keydown', onKey)
+      globe?.dispose()
+    }
+  }
+
+  document.addEventListener('astro:page-load', mount)
+  document.addEventListener('astro:before-swap', () => {
+    teardown?.()
+    teardown = undefined
+  })
+</script>

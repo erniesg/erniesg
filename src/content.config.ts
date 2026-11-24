@@ -9,8 +9,8 @@ const blog = defineCollection({
       title: z
         .string()
         .max(
-          60,
-          'Title should be 60 characters or less for optimal Open Graph display.',
+          100,
+          'Title should be 100 characters or less for optimal Open Graph display.',
         ),
       description: z
         .string()
@@ -67,6 +67,7 @@ const projects = defineCollection({
       tags: z.array(z.string()),
       image: image(),
       link: z.url(),
+      order: z.number().optional(),
     }),
 })
 

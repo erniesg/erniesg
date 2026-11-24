@@ -51,6 +51,7 @@ export async function syncTranslations({
     ]) {
       if (targetLocale === sourceLocale) continue
       const targetPath = targetPathForLocale(sourcePath, targetLocale)
+      if (isProtectedPath(targetPath, config)) continue
       const target = getManifestTarget(manifest, targetPath)
       const exists = await fs
         .access(targetPath)
@@ -59,8 +60,8 @@ export async function syncTranslations({
       if (target && target.status !== 'machine') continue
       const stale = Boolean(
         target &&
-          target.status === 'machine' &&
-          target.sourceSha256 !== sha256(source.raw),
+        target.status === 'machine' &&
+        target.sourceSha256 !== sha256(source.raw),
       )
       if (!exists || stale || all) {
         results.push(

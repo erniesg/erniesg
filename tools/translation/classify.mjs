@@ -20,7 +20,7 @@ import {
   toPosixPath,
 } from './content.mjs'
 
-async function classifyFile(filePath, { config, manifest, apply }) {
+export async function classifyFile(filePath, { config, manifest, apply }) {
   const normalized = toPosixPath(filePath)
   if (isProtectedPath(normalized, config)) {
     return { filePath: normalized, action: 'skipped-protected' }
@@ -41,8 +41,8 @@ async function classifyFile(filePath, { config, manifest, apply }) {
   const updatedRaw = setFrontmatterFields(target.raw, {
     lang: locale,
     translationKey,
-    translationStatus: 'machine',
-    translationSource: 'codex',
+    translationStatus: 'edited',
+    translationSource: 'human',
   })
 
   const family = ensureFamily(manifest, familyKey)
@@ -50,21 +50,21 @@ async function classifyFile(filePath, { config, manifest, apply }) {
   family.sourceLocale = sourceLocale
   family.targets[locale] = {
     path: normalized,
-    status: 'machine',
+    status: 'edited',
     sourcePath,
     sourceLocale,
     targetLocale: locale,
     sourceSha256: sha256(sourceRaw),
     targetSha256: sha256(updatedRaw),
-    provider: 'codex',
-    model: 'preexisting-machine-translation',
+    provider: 'human',
+    model: null,
     promptVersion: config.promptVersion,
     classifiedAt: nowIso(),
     qualityStatus: 'unreviewed',
     reviewScore: null,
     researchNotes: [],
     unresolvedResearch: [
-      'classified-existing-machine-translation-needs-review',
+      'existing-content-provenance-unverified-preserve-original',
     ],
   }
 

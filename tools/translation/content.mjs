@@ -147,11 +147,26 @@ export function getManifestTarget(manifest, filePath) {
 }
 
 export function canWriteExistingTarget({
+  filePath,
+  config,
   frontmatter,
   manifestTarget,
   currentText,
 }) {
+  if (config && filePath && isProtectedPath(filePath, config)) return false
   if (frontmatter?.translationStatus !== 'machine') return false
+  if (manifestTarget?.status !== 'machine') return false
+  const machineSources = [
+    'codex',
+    'codex-cli',
+    'openai',
+    'anthropic',
+    'google',
+    'gemini',
+  ]
+  if (!machineSources.includes(frontmatter.translationSource)) return false
+  if (!machineSources.includes(manifestTarget.provider)) return false
+  if (manifestTarget.model === 'preexisting-machine-translation') return false
   if (!manifestTarget?.targetSha256) return false
   return manifestTarget.targetSha256 === sha256(currentText)
 }
@@ -161,7 +176,7 @@ export function assertCanWriteExistingTarget(input) {
   const status = input.frontmatter?.translationStatus ?? 'missing'
   const pathLabel = input.filePath ? ` ${input.filePath}` : ''
   throw new Error(
-    `Refusing to overwrite${pathLabel}: translationStatus=${status}, manifest hash missing, or target hash drifted.`,
+    `Refusing to overwrite${pathLabel}: translationStatus=${status}, protected path, unverified machine provenance, manifest hash missing, or target hash drifted.`,
   )
 }
 

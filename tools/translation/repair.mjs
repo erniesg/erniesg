@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url'
 import {
   canWriteExistingTarget,
   getManifestTarget,
+  isProtectedPath,
   listTargetSidecars,
+  loadConfig,
   loadManifest,
   nowIso,
   parseArgs,
@@ -115,11 +117,16 @@ export function repairText(raw, locale) {
 }
 
 export async function repairMachineTranslations({ apply = false } = {}) {
+  const config = await loadConfig()
   const manifest = await loadManifest()
   const files = await listTargetSidecars(['zh', 'ko', 'ja'])
   const results = []
 
   for (const filePath of files) {
+    if (isProtectedPath(filePath, config)) {
+      results.push({ filePath, action: 'skipped-protected' })
+      continue
+    }
     const file = await readMdxFile(filePath)
     const locale = file.frontmatter.lang
     if (file.frontmatter.translationStatus !== 'machine') {
@@ -130,6 +137,8 @@ export async function repairMachineTranslations({ apply = false } = {}) {
     const manifestTarget = getManifestTarget(manifest, filePath)
     if (
       !canWriteExistingTarget({
+        filePath,
+        config,
         frontmatter: file.frontmatter,
         manifestTarget,
         currentText: file.raw,

@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import {
   hasSourceInkOnCropEdge,
@@ -205,7 +206,12 @@ describe('PDF source-page crops', () => {
     const loadingTask = pdfjs.getDocument({
       data: new Uint8Array(bytes),
       isEvalSupported: false,
-      useSystemFonts: true,
+      // Render with the Foxit fonts shipped in the pinned pdfjs-dist package,
+      // never with machine-installed fonts, so pixels match on every runner.
+      useSystemFonts: false,
+      standardFontDataUrl: fileURLToPath(
+        new URL('../../node_modules/pdfjs-dist/standard_fonts/', import.meta.url),
+      ),
     })
     const document = await loadingTask.promise
     const page = await document.getPage(1)

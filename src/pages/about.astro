@@ -1,4 +1,5 @@
 ---
+import AtlasTeaser from '@/components/atlas/AtlasTeaser.astro'
 import AuthorCard from '@/components/AuthorCard.astro'
 import Breadcrumbs from '@/components/Breadcrumbs.astro'
 import Container from '@/components/Container.astro'
@@ -8,7 +9,9 @@ import Layout from '@/layouts/Layout.astro'
 import { getStaticTranslation } from '@/lib/i18n'
 import { getCollection } from 'astro:content'
 
-const projects = await getCollection('projects')
+const projects = (await getCollection('projects')).sort(
+  (a, b) => (a.data.order ?? Infinity) - (b.data.order ?? Infinity),
+)
 const author = (await getCollection('authors')).find(author => author.id === 'erniesg')
 ---
 
@@ -20,7 +23,13 @@ const author = (await getCollection('authors')).find(author => author.id === 'er
       ]}
     />
 
-    {author && <AuthorCard author={author} />}
+    {
+      author && (
+        <AuthorCard author={author}>
+          <AtlasTeaser />
+        </AuthorCard>
+      )
+    }
 
     <section>
       <div class="min-w-full">

@@ -1,0 +1,11 @@
+{
+  "name": "erniesg-trusted-translation-runner",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "fast-glob": "3.3.3",
+    "gray-matter": "4.0.3",
+    "openai": "6.45.0",
+    "parse5": "8.0.1"
+  }
+}

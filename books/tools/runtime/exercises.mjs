@@ -60,25 +60,71 @@ export function results(produced, expected, error) {
 
 export function wireExercises(root = document, { onResult } = {}) {
 root.querySelectorAll('.exercise').forEach(ex => {
-  const button = ex.querySelector('.check');
+  const check = ex.querySelector('.check');
+  const run = ex.querySelector('.run-exercise');
   const editor = ex.querySelector('.editor');
   const status = ex.querySelector('.status');
   const panel = ex.querySelector('.results');
-  if (!button || !editor || ex.dataset.wired) return; // the print edition shows exercises without a checker
+  const output = ex.querySelector('[data-exercise-output]');
+  const outputText = output?.querySelector('pre');
+  if (!check || !editor || ex.dataset.wired) return; // the print edition shows exercises without a checker
   ex.dataset.wired = '1';
-  button.onclick = async () => {
-    button.disabled = true; button.classList.add('busy');
-    status.textContent = pythonLoaded() ? 'Checking' : 'Loading Python, first time only';
+
+  function clear() {
     panel.hidden = true; panel.innerHTML = ''; panel.className = 'results';
-    const { out, error } = await runPython(editor.value);
-    const { allOk, html } = results(out, ex.dataset.expected, error);
-    panel.hidden = false;
-    panel.className = 'results ' + (allOk ? 'pass' : 'fail');
-    panel.innerHTML = html;
-    status.textContent = '';
-    button.disabled = false; button.classList.remove('busy');
-    onResult?.({ id: exerciseId(ex), section: ex, code: editor.value, allOk });
-  };
+    if (output) output.hidden = true;
+    if (outputText) outputText.textContent = '';
+    output?.classList.remove('error');
+  }
+
+  function showOutput(out, error) {
+    if (!output || !outputText) return;
+    const text = out || (error ? `Error:\n${error.trim()}` : 'No output.');
+    outputText.textContent = error && out ? `${out}\n\nError:\n${error.trim()}` : text;
+    output.classList.toggle('error', Boolean(error));
+    output.hidden = false;
+  }
+
+  async function execute(mode) {
+    const source = editor.value;
+    check.disabled = true; check.classList.add('busy');
+    if (run) { run.disabled = true; run.classList.add('busy'); }
+    editor.disabled = true;
+    clear();
+    status.textContent = pythonLoaded()
+      ? (mode === 'check' ? 'Checking' : 'Running')
+      : 'Loading Python, first time only';
+    let out = '';
+    let error = '';
+    try {
+      ({ out, error } = await runPython(source));
+      showOutput(out, error);
+      if (mode === 'check') {
+        const { allOk, html } = results(out, ex.dataset.expected, error);
+        panel.hidden = false;
+        panel.className = 'results ' + (allOk ? 'pass' : 'fail');
+        panel.innerHTML = html;
+        onResult?.({ id: exerciseId(ex), section: ex, code: source, allOk });
+      }
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : String(caught);
+      showOutput(out, error);
+      if (mode === 'check') {
+        const { allOk, html } = results(out, ex.dataset.expected, error);
+        panel.hidden = false;
+        panel.className = 'results fail';
+        panel.innerHTML = html;
+        onResult?.({ id: exerciseId(ex), section: ex, code: source, allOk });
+      }
+    } finally {
+      status.textContent = '';
+      check.disabled = false; check.classList.remove('busy');
+      if (run) { run.disabled = false; run.classList.remove('busy'); }
+      editor.disabled = false;
+    }
+  }
+
+  check.onclick = () => execute('check');
+  if (run) run.onclick = () => execute('run');
 });
 }
-

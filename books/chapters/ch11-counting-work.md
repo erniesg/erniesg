@@ -282,8 +282,8 @@ second one way and nothing at all the other.
 This is worth saying plainly, because "always use the faster one" is bad
 advice. A shape is a promise about what happens as n grows. Below a few
 hundred items, the shapes are indistinguishable and you should pick whichever
-code reads better. Above a few thousand, the shape is the only thing that
-matters and no amount of tidy code will save the wrong one.
+code reads better. Above a few thousand, the shape dominates the running time;
+tidy code does not make the wrong shape fast enough.
 
 Which means the question is never "is this fast?" It is "how big does n get?"
 — and that is written in the problem's constraints, which is why the constraint
@@ -350,15 +350,15 @@ print(f"fastest to slowest: {(max(runs) - min(runs)) / min(runs) * 100:.0f}% apa
 
 A percent or two apart on a quiet machine — close enough to trust. Now open
 something else, or run it on a cheaper laptop, and the same loop takes two or
-three times as long. The number you measure is a fact about your afternoon as
-much as about your code, and it is not a number you can quote to anyone else.
+three times as long. The number you measure also depends on the machine and
+what else it is doing, so it does not apply everywhere.
 
 The step count does not move. `40,000 × 200,000` is 8 billion on a fast
 machine and 8 billion on a slow one. So count first, and use the clock only to
 confirm what you already worked out. A measurement that surprises you means
 your count was wrong — usually because of a line you did not think of as a
 loop, like `value in some_list` or `some_list.remove(value)`, each of which
-quietly walks the whole list.
+walks the whole list.
 
 ## What this buys the agent
 

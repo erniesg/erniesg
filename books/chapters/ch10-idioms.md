@@ -22,7 +22,7 @@ them had joined that year.
 Nothing in the badge code had changed. The fastest-eight function had sorted
 the club's list of names into time order, in place, and never put it back.
 
-## Hand back a new list. Don't rearrange the one you were given
+## Return a new list. Don't rearrange the one you were given
 
 Here is the crime, in four lines:
 
@@ -43,7 +43,7 @@ The first line of output is right. The second is the problem: `members` is no
 longer in joining order, and nothing said so. The function was asked a
 question and it rearranged the filing cabinet on its way out.
 
-The fix is one letter and no cleverness:
+Use `sorted` to make a new list:
 
 ```python run
 def shortlist(names):
@@ -59,10 +59,9 @@ print(members)
 list and leaves the original alone. Same for `names.reverse()` against
 `reversed(names)`, and `names.append(x)` against `names + [x]`.
 
-This is not tidiness. A function that quietly changes its caller's list causes
-a bug *somewhere else*, in code that looks fine, possibly months later. The
-badge code was never wrong. It was reading a list that somebody else had turned
-over.
+A function that changes its caller's list can cause a failure elsewhere, in
+code that looks correct. The badge code read a list that another function had
+reordered.
 
 So: take a list, return a new list. If you really do mean to change the
 caller's list, put it in the name — `add_member(club, name)` reads like it
@@ -322,7 +321,7 @@ if names:
 `if not names` beats `if len(names) == 0`. Both work; one reads like a
 sentence.
 
-One trap, worth ten seconds of your attention. `0` is also false:
+`0` is also false:
 
 ```python run
 seconds = 0
@@ -387,17 +386,12 @@ can see it.
 
 ## What this buys the agent
 
-Two things, and only one of them is about looks.
+The agent edits code and then checks its own work. An edit that changes a list
+used elsewhere can fail far from the changed line. A function that takes values
+and returns new values can be tested on its own.
 
-The agent edits code and then has to check its own work. An edit that changes a
-list the rest of the program is still holding is the hardest kind of bug for it
-to find, because the failing test is nowhere near the line that caused it. A
-function that takes values in and hands new values out can be tested on its
-own, which is what the agent needs to be able to trust itself.
-
-The other thing: you will read what the agent writes. Code you can scan in ten
-seconds gets reviewed. Code that needs a pencil and a quiet room does not get
-reviewed, it gets approved, which is not the same and is how bad edits land.
+You will also read what the agent writes. Code that is easy to scan is easier
+to review and less likely to hide a wrong change.
 
 ## Your turn
 

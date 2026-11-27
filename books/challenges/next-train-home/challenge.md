@@ -92,7 +92,7 @@ Look at the departure in the middle of the timetable. If it leaves before
 of them again. If it leaves at or after `arrival`, it might be the answer — but
 so might something earlier, so keep the earlier half and drop the rest.
 
-Repeat on whatever is left. Twenty-odd looks and there is one minute standing.
+Repeat with the remaining half. About 19 checks find one minute.
 :::
 
 :::hint{level=3}
@@ -138,7 +138,7 @@ minute slot into the timetable?", and the answer to that is `low` when the loop
 ends. Checking for an exact match as you go would let the loop stop early on a
 lucky hit, which sounds like a saving and costs you the general answer.
 
-**The comparison is `<`, and that is the whole of the tie handling.**
+**Use `<` for the comparison.**
 `departures[mid] < arrival` sends you right only when the train has definitely
 gone. A train leaving in exactly the arrival minute fails that test, so `high`
 comes down and the search keeps it in play. Write `<=` there instead and you
@@ -172,8 +172,7 @@ def next_departure(departures, arrival):
     return departures[where]
 ```
 
-`bisect_left` is the same insertion point, and note that the guard does not go
-away — no library can decide for you what "there is no next train" should look
-like. Write the loop by hand once, because the next challenge searches
-something that is not a list, and then let `bisect` do it forever after.
+`bisect_left` returns the same insertion point. Keep the guard because the
+function must still return `-1` when there is no next train. Write the loop by
+hand once; use `bisect` when it fits the problem.
 :::

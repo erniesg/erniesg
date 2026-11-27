@@ -87,10 +87,8 @@ repeat, and `25 * 4` is `100`.
 
 Leave out the `int` and the tests fail loudly rather than quietly: `"25" * 4`
 returns `"25252525"`, which is text, and the public tier compares it against
-`100` and finds them different. That is the whole lesson — the operator did
-exactly what it was told, for the kind of value it was given.
+`100` and finds them different. `*` repeats text but multiplies numbers.
 
-**Zero is worth a look.** `"0"` becomes `0`, and anything times zero is zero,
-so both zero cases fall out without special handling. Code that needs an `if`
-for zero here is usually code that forgot to convert.
+**Zero needs no special case.** `"0"` becomes `0`, and anything times zero is
+zero.
 :::

@@ -37,9 +37,9 @@ print("2" + "3")    # 23  — text joins end to end
 ```
 
 Nothing is broken in the second line. `+` means "add" for numbers and "join"
-for text, and Python cannot read your mind about which you wanted. Most
-beginner bugs are this: a value is text when you thought it was a number,
-usually because it came from a file, a form, or `input()`.
+for text, and Python cannot infer which you intended. A common mistake is that
+a value is text when you expected a number, usually because it came from a
+file, a form, or `input()`.
 
 When the two kinds meet, Python refuses rather than guessing:
 
@@ -50,9 +50,8 @@ except TypeError as error:
     print("TypeError:", error)
 ```
 
-Read that error. `TypeError: can only concatenate str (not "int") to str` is
-Python telling you exactly which two kinds it was asked to mix. You will see
-this message for the rest of your life, so it is worth recognising now.
+`TypeError: can only concatenate str (not "int") to str` names the two kinds
+Python was asked to mix. Read those names to find the value that needs changing.
 
 To cross between kinds, say so:
 
@@ -110,7 +109,7 @@ price = 10
 print(total)      # still 12
 ```
 
-If you want the new answer, work it out again. This catches everyone once.
+If you want the new answer, work it out again.
 
 **A name can be re-pointed at any time**, including at a different kind of
 value. That is legal and occasionally the bug:
@@ -150,8 +149,8 @@ print(total)
 
 ## Integer division, and the two slashes
 
-Two kinds of division exist, and choosing the wrong one quietly changes your
-answer:
+Two kinds of division exist, and choosing the wrong one changes your answer
+without raising an error:
 
 ```python run
 print(7 / 2)    # 3.5  — ordinary division, always a float
@@ -160,8 +159,8 @@ print(7 % 2)    # 1    — the remainder itself
 ```
 
 `//` and `%` come back constantly: splitting things into rows, telling odd from
-even, wrapping around a clock. They are not exotic; they are how you say "how
-many whole ones fit, and what is left over".
+even, wrapping around a clock. Together they answer "how many whole ones fit,
+and what is left over".
 
 :::figure{id="three-kinds"}
 Three kinds of value, and what the same symbol does to each.

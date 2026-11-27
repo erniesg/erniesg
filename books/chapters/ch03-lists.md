@@ -18,9 +18,8 @@ She pulls out the third tin. Everything behind it slides one place forward, so
 the next tin she looks at is the one that used to be fifth. The fourth is now
 behind her, and it goes out in somebody's food parcel.
 
-Nine things in a row is a list. That bug is one of the two this chapter is
-really about; the other one quietly shares a list between two people who each
-think they have their own.
+Nine things in a row is a list. This chapter covers two list bugs: changing a
+list while walking it, and accidentally sharing one list through two names.
 
 ## Values in a row, counted from 0
 
@@ -134,7 +133,7 @@ print(shelf)
 them — and raises `ValueError` if there is no match at all. `pop` takes a
 position and returns what it removed.
 
-These methods change the list where it stands and hand back `None`. So
+These methods change the list in place and return `None`. So
 `shelf = shelf.append("tea")` does not give you a longer shelf; it gives you
 `None` and loses the shelf.
 
@@ -171,7 +170,7 @@ print(len(shelf))
 does up to 200,000 comparisons. Fine once. Inside a loop over another long
 list, it is the slowest line you will ever write, and Part II replaces it.
 
-## The first trap: changing a list while you walk it
+## Changing a list while you walk it
 
 Nine tins, where `1` is good and `0` is past its date:
 
@@ -202,8 +201,8 @@ for tin in tins[:]:
 print(tins)
 ```
 
-Or build the list you want and never edit the one you are reading, which is
-usually the better habit and always the easier one to read:
+Or build the list you want and leave the original unchanged. This is usually
+clearer:
 
 ```python run
 tins = [1, 1, 0, 0, 0, 1, 1, 1, 1]
@@ -246,7 +245,7 @@ print(readings)
 ```
 :::
 
-## The second trap: b = a does not make a copy
+## `b = a` does not make a copy
 
 ```python run
 shelf = ["beans", "rice", "soup"]
@@ -271,9 +270,8 @@ print(backup is shelf)
 
 Now there really are two lists, and only one of them lost a tin.
 
-This is not a beginner's mistake you grow out of. It arrives whenever a list
-is passed into a function, stored somewhere, and changed later by whoever else
-is holding it.
+This can happen whenever a list is passed into a function, stored somewhere,
+and changed later through another name.
 
 :::figure{id="two-names-one-list"}
 One list can answer to several names. A slice makes a second list.
@@ -309,11 +307,9 @@ lines that matched a search, the failures from a test run, the steps of a
 plan. It takes slices of them — the last 40 lines of a log, the top 10 hits —
 and it filters them, dropping files it has already read.
 
-So both traps are its traps. Remove-while-looping is how a plan silently loses
-a step, and nothing crashes to tell you. Aliasing is worse: the planner and
-the executor end up holding one list, one of them filters it, and the other's
-work disappears. Passing `steps[:]` instead of `steps` is a keystroke, and it
-is the difference between a bug you can see and a bug you cannot.
+An agent can make the same mistakes. Removing items while looping can skip a
+step. If a planner and executor share one list, filtering it in one place also
+changes it in the other. Pass `steps[:]` when the receiver needs its own copy.
 
 ## Your turn
 

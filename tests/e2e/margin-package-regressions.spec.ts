@@ -78,6 +78,41 @@ test('arbitrary palette keys paint through CSS highlights without collisions', a
   expect(new Set(result).size).toBe(3)
 })
 
+
+test('a custom note palette keeps its fallback fill below a separate visible cue', async ({ page }) => {
+  await page.evaluate(() => {
+    Object.defineProperty(CSS, 'highlights', {
+      configurable: true,
+      value: undefined,
+    })
+  })
+  const result = await page.evaluate(() => {
+    window.marginTest.paint(
+      [{ id: 'note', color: 'note', nodeId: 'quote', start: 0, end: 10 }],
+      { note: 'rgb(12, 34, 56)' },
+      'note-palette',
+    )
+    const fill = document.querySelector<HTMLElement>(
+      '[data-margin-highlight="note"]',
+    )
+    const cue = document.querySelector<HTMLElement>(
+      '[data-erniesg-margin-note-cues] > *',
+    )
+    return {
+      fill: fill ? getComputedStyle(fill).backgroundColor : null,
+      cue: cue
+        ? [
+            getComputedStyle(cue).zIndex,
+            getComputedStyle(cue).borderBottomWidth,
+            getComputedStyle(cue).borderBottomStyle,
+          ]
+        : null,
+    }
+  })
+  expect(result.fill).toBe('rgb(12, 34, 56)')
+  expect(result.cue).toEqual(['1', '2px', 'solid'])
+})
+
 test('React restores apiBase after removing an override and preserves client-only mode', async ({ page }) => {
   await page.evaluate(() => {
     window.marginInjected = { request: async () => ({ status: 200, body: {} }) }

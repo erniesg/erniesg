@@ -103,8 +103,8 @@ separator and the empty pieces thrown away — which is why the stray ends and
 the doubled middles never reach your code. `"-".join(...)` puts a single hyphen
 between what is left.
 
-**Why the empty title needs no `if`.** `"   ".split()` is `[]`, and joining an
-empty list gives `""`. The case that looks special isn't.
+**An empty title needs no `if`.** `"   ".split()` is `[]`, and joining an empty
+list gives `""`.
 
 **The version that nearly works.**
 
@@ -117,7 +117,5 @@ It handles the first sample and fails the second: `"  Two   Pointers  "` comes
 out as `"--two---pointers--"`, because `replace` swaps every space one for one
 and has no idea that three in a row were one gap. `split` knows.
 
-**Nothing was edited.** `title` is exactly what the caller passed in, still. You
-made three new strings and returned the last one; strings leave you no other
-option.
+**`title` is unchanged.** Each string method returns a new string.
 :::

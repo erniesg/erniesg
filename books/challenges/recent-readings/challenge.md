@@ -109,18 +109,16 @@ This is why no `if` is needed for that case — and worth checking rather than
 assuming, because the same generosity is not on offer when you index a single
 position: `readings[-7]` on a three-item list is an `IndexError`.
 
-**Now the one that catches everyone.** `-0` and `0` are the same number, so
+**Handle `n == 0` first.** `-0` and `0` are the same number, so
 `readings[-0:]` is `readings[0:]`, which is the whole log. An empty screen
 would show every reading ever taken. Nothing in Python will warn you: the
 slice is legal, it just answers a different question. So `n == 0` is settled
 on its own rung, before any slicing happens, exactly like the divide-by-zero
 guard in Chapter 1.
 
-**Why a slice and not the list itself.** Returning `readings` when `n` is
-larger than the log would pass every test that only checks the contents — and
-then the caretaker's next reading appears on a screen that was supposed to be
-a snapshot, because both names point at one list. The edge tier asks `is not`
-directly. The habit worth taking away: hand out a slice, keep the original.
+**Return a slice, not `readings`.** Returning `readings` itself makes the
+result and original log refer to the same list. The edge tier checks that they
+are different objects.
 
 **What it costs.** Copying `n` readings, whatever the log's length. That is
 why the perf tier, which calls this thousands of times against a log of

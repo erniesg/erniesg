@@ -40,9 +40,8 @@ gate refuses it, the balance does not move, and the refusal is logged.
 Replay a day of activity and report two things: the balance at the end, and
 the positions of the entries that were refused.
 
-The starter is already written and it is already wrong. The card it describes
-can go below zero, which is the one thing the machine promises cannot happen.
-Find out where, and read the tests to learn what should have happened instead.
+The starter is wrong: it can let the balance go below zero. Find the line that
+allows this, then use the tests to confirm the required behaviour.
 :::
 
 :::io
@@ -57,7 +56,7 @@ output: a pair — the final balance, and a list of the positions that were refu
 - A fare that takes the balance to exactly zero is allowed.
 - A refused fare changes nothing. The entries after it see the balance it
   would have had if that entry had never arrived.
-- The balance is never below zero, at any point, ever.
+- The balance never goes below zero.
 :::
 
 :::sample
@@ -71,7 +70,7 @@ output: a pair — the final balance, and a list of the positions that were refu
 :::
 
 :::figure{id="stepping-a-loop"}
-Print the balance on every entry and the line that breaks the promise stands out.
+Print the balance after every entry to find where it becomes negative.
 :::
 
 :::run{starter="starter.py"}
@@ -90,31 +89,24 @@ def replay(amounts):
     return (balance, rejected)
 ```
 
-**What the bug actually was.** The starter added the amount first and then
-looked at the result. By the time it noticed the balance was negative, the
-balance *was* negative, and nothing put it back. It logged the refusal
-correctly and refused nothing.
+**The starter changed the balance too early.** It added the amount before
+checking the result. When it found a negative balance, the balance had already
+changed.
 
 `[500, -200, -400, 100]` shows it: 500, then 300, then -100 with position 2
 logged, then 0. The right answer is 400, because the -400 never happened.
 
-**Ask before, not after.** `balance + amount < 0` works out what would happen
-without letting it happen. That is the shape of every rule like this one: test
-the move, then make it, never the other way round.
+**Check before changing the balance.** `balance + amount < 0` checks the
+result before adding the fare.
 
-**Why the `amount < 0` part matters.** Without it the test is just
-`balance + amount < 0`, which is the same answer for a top-up as for a fare —
-a top-up can never take you below zero. It reads better with it, and it says
-out loud which entries the rule is about. Leave it out and the code still
-passes; the next person still has to work out why.
+**Keep `amount < 0` in the condition.** A top-up cannot make the balance
+negative. The check makes clear that the rule applies to fares.
 
-**Finding it.** One print inside the loop, showing the position, the amount and
-the balance after, and the negative number is on the screen with its position
-next to it. `breakpoint()` on the line before and `p balance, amount` gives the
-same answer if you would rather poke at it than read it.
+**Finding it.** Print the position, amount and balance inside the loop. The
+negative balance appears with the entry that caused it. You can also pause
+before that line with `breakpoint()` and type `p balance, amount`.
 
-**Why the perf tier is here.** The obvious way to be sure of the balance is to
-add up everything you have accepted so far, on every entry. That is right, and
-on 200,000 entries it is twenty billion additions. Keep the running balance in
-a name instead; it is the same number, worked out once.
+**Keep a running balance.** Adding all accepted entries again for every entry
+would take twenty billion additions for 200,000 entries. Update `balance`
+once for each entry instead.
 :::

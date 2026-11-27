@@ -109,16 +109,15 @@ change lands in `kept`, a list this function made. Nothing slides underneath
 the walk, so nothing gets skipped, and the caller's shelf is untouched without
 having to be protected.
 
-**Order is free.** Items are appended in the order they were met, so whatever
-survives keeps its old sequence. Anything built by repeated removal has to
-work to keep that true.
+**Appending keeps the order.** Items are appended in the order they were met,
+so the survivors keep their old sequence.
 
 **Why not `remove` in a loop.** Two problems, and they are different ones.
 It edits the caller's list, which the statement forbids and the edge tier
 checks. And every `remove` has to slide everything behind the hole down one
 place, so 100,000 recalled tins on a 200,000-item shelf move billions of
 labels between them — the perf tier stops it. One pass and one append per
-survivor is the whole job.
+survivor completes the work.
 
 **The empty-but-new case.** When nothing is recalled, `kept` is a brand new
 list that happens to hold the same labels. Returning `items` itself would look
